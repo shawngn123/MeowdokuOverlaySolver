@@ -31,6 +31,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.DisplayCutout;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -54,9 +55,12 @@ public class OverlayService extends Service {
     private static final int NOTIFICATION_ID = 1;
     private static final String SOLVE_BUTTON_ID = "solve";
     private static final String QUIT_BUTTON_ID = "quit";
+    private static final String QUIT_BUTTON_TEXT = "I <3 Candace";
+    private static final String LOADING_BASE_TEXT = "Loading";
     private static final String KEY_BUTTON_X_PREFIX = "button_position_x_";
     private static final String KEY_BUTTON_Y_PREFIX = "button_position_y_";
     private static final int BUTTON_TEXT_SIZE_SP = 17;
+    private static final int QUIT_BUTTON_AUTO_SIZE_MIN_SP = 8;
     private static final int BUTTON_HORIZONTAL_PADDING_DP = 18;
     private static final int BUTTON_VERTICAL_PADDING_DP = 8;
     private static final int BUTTON_CORNER_RADIUS_DP = 28;
@@ -76,12 +80,18 @@ public class OverlayService extends Service {
     private static final int STATUS_HORIZONTAL_PADDING_DP = 16;
     private static final int STATUS_VERTICAL_PADDING_DP = 9;
     private static final int STATUS_CORNER_RADIUS_DP = 18;
+    private static final int LOADING_TEXT_SIZE_SP = 13;
+    private static final int LOADING_TEXT_MIN_HEIGHT_DP = 18;
+    private static final int LOADING_LEFT_MARGIN_DP = 8;
     private static final int CAPTURE_MAX_IMAGES = 2;
     private static final long DRAG_HOLD_MS = 300L;
     private static final long CAPTURE_BUTTON_HIDE_DELAY_MS = 90L;
     private static final long CAPTURE_TIMEOUT_MS = 3000L;
+    private static final long LOADING_ANIMATION_INTERVAL_MS = 500L;
     private static final long DEBUG_OVERLAY_DURATION_MS = 2500L;
     private static final long STATUS_DURATION_MS = 1500L;
+    private static final int LOADING_FRAME_COUNT = 4;
+    private static final float HIDDEN_DEBUG_OVERLAY_ALPHA = 0f;
     private static Intent permissionData;
     private static int permissionResult = Activity.RESULT_CANCELED;
     private static boolean permissionConsumed;
@@ -94,6 +104,7 @@ public class OverlayService extends Service {
     private Button quitButton;
     private DebugOverlayView debugOverlay;
     private TextView statusBubble;
+    private TextView loadingText;
     private MediaProjection projection;
     private VirtualDisplay virtualDisplay;
     private ImageReader reader;
@@ -106,6 +117,16 @@ public class OverlayService extends Service {
     private int displayDensity;
     private Runnable timeout;
     private volatile int operationId;
+    private int loadingFrame;
+    private final Runnable loadingTick = new Runnable() {
+        @Override public void run() {
+            if (loadingText == null || !busy) return;
+            loadingFrame = (loadingFrame + 1) % LOADING_FRAME_COUNT;
+            updateLoadingText();
+            positionLoadingIndicator();
+            main.postDelayed(this, LOADING_ANIMATION_INTERVAL_MS);
+        }
+    };
 
     public static synchronized void setProjectionPermission(int result, Intent data) {
         permissionResult = result;
@@ -161,6 +182,7 @@ public class OverlayService extends Service {
         cancelTimeout();
         closeReader();
         removeDebugOverlay();
+        hideLoadingIndicator();
         removeStatusBubble();
         worker.shutdownNow();
         removeOverlayButton(solveButtonRow);
@@ -182,8 +204,8 @@ public class OverlayService extends Service {
 
     private void showControlButtons() {
         if (quitButton == null) {
-            quitButton = createOverlayButton("QUIT", v -> quitPuzzle(), QUIT_BUTTON_ID);
-            addOverlayButton(quitButton);
+            quitButton = createOverlayButton(QUIT_BUTTON_TEXT, v -> quitPuzzle(), QUIT_BUTTON_ID);
+            addOverlayButton(quitButton, dp(BUTTON_MIN_WIDTH_DP), dp(BUTTON_MIN_HEIGHT_DP));
         }
         if (solveButtonRow == null) {
             solveButtonRow = createBoardSizeButtonRow();
@@ -238,7 +260,11 @@ public class OverlayService extends Service {
         button.setText(text);
         button.setTextColor(Color.WHITE);
         button.setTextSize(BUTTON_TEXT_SIZE_SP);
+        button.setAutoSizeTextTypeUniformWithConfiguration(QUIT_BUTTON_AUTO_SIZE_MIN_SP, BUTTON_TEXT_SIZE_SP, 1, TypedValue.COMPLEX_UNIT_SP);
         button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setSingleLine(true);
+        button.setIncludeFontPadding(false);
         button.setMinWidth(dp(BUTTON_MIN_WIDTH_DP));
         button.setMinHeight(dp(BUTTON_MIN_HEIGHT_DP));
         button.setPadding(dp(BUTTON_HORIZONTAL_PADDING_DP), dp(BUTTON_VERTICAL_PADDING_DP), dp(BUTTON_HORIZONTAL_PADDING_DP), dp(BUTTON_VERTICAL_PADDING_DP));
@@ -286,6 +312,7 @@ public class OverlayService extends Service {
         int operation = ++operationId;
         busy = true;
         removeDebugOverlay();
+        hideLoadingIndicator();
         removeStatusBubble();
         setControlButtonsVisibility(View.INVISIBLE);
         main.postDelayed(() -> beginCapture(operation, forcedBoardSize), CAPTURE_BUTTON_HIDE_DELAY_MS);
@@ -343,6 +370,7 @@ public class OverlayService extends Service {
             Bitmap pipelineBitmap = next.copy(Bitmap.Config.ARGB_8888, false);
             capturing = false;
             restoreControlButtons();
+            showLoadingIndicator();
             Log.i(TAG, "Screen captured successfully");
             process(pipelineBitmap, operation, forcedBoardSize);
         } catch (Exception error) { fail(operation, error.getMessage(), error); }
@@ -399,6 +427,9 @@ public class OverlayService extends Service {
                     if (isCurrentOperation(operation) && !DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
                 });
                 if (!isCurrentOperation(operation)) return;
+                main.post(() -> {
+                    if (isCurrentOperation(operation)) hideLoadingIndicator();
+                });
                 SolverAccessibilityService.tapMissing(
                         result.board,
                         result.model.occupied,
@@ -418,6 +449,7 @@ public class OverlayService extends Service {
         main.post(() -> {
             if (!isCurrentOperation(operation)) return;
             if (!DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
+            hideLoadingIndicator();
             if (reason != null) {
                 Log.i(TAG, reason);
                 showStatus(reason);
@@ -446,6 +478,7 @@ public class OverlayService extends Service {
         cancelTimeout();
         closeReader();
         removeDebugOverlay();
+        hideLoadingIndicator();
         removeStatusBubble();
         capturing = false;
         busy = false;
@@ -457,6 +490,7 @@ public class OverlayService extends Service {
         removeDebugOverlay();
         debugOverlay = new DebugOverlayView(this);
         debugOverlay.show(data);
+        debugOverlay.setAlpha(HIDDEN_DEBUG_OVERLAY_ALPHA);
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -473,6 +507,79 @@ public class OverlayService extends Service {
         if (debugOverlay == null) return;
         try { windows.removeView(debugOverlay); } catch (RuntimeException ignored) { }
         debugOverlay = null;
+    }
+
+    private void showLoadingIndicator() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(this::showLoadingIndicator);
+            return;
+        }
+        if (loadingText == null) {
+            loadingText = new TextView(this);
+            loadingText.setTextColor(Color.argb(230, 255, 255, 255));
+            loadingText.setTextSize(LOADING_TEXT_SIZE_SP);
+            loadingText.setGravity(Gravity.CENTER_VERTICAL);
+            loadingText.setSingleLine(true);
+            loadingText.setIncludeFontPadding(false);
+            loadingText.setShadowLayer(3f, 0f, 1f, Color.argb(190, 0, 0, 0));
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+            );
+            params.gravity = Gravity.TOP | Gravity.START;
+            windows.addView(loadingText, params);
+        }
+        loadingFrame = 0;
+        updateLoadingText();
+        positionLoadingIndicator();
+        main.removeCallbacks(loadingTick);
+        main.postDelayed(loadingTick, LOADING_ANIMATION_INTERVAL_MS);
+    }
+
+    private void hideLoadingIndicator() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            main.post(this::hideLoadingIndicator);
+            return;
+        }
+        main.removeCallbacks(loadingTick);
+        if (loadingText == null) return;
+        try { windows.removeView(loadingText); } catch (RuntimeException ignored) { }
+        loadingText = null;
+        loadingFrame = 0;
+    }
+
+    private void updateLoadingText() {
+        if (loadingText == null) return;
+        StringBuilder text = new StringBuilder(LOADING_BASE_TEXT);
+        for (int i = 0; i < loadingFrame; i++) text.append('.');
+        loadingText.setText(text.toString());
+    }
+
+    private void positionLoadingIndicator() {
+        if (loadingText == null || quitButton == null || quitButton.getParent() == null) return;
+        WindowManager.LayoutParams quitParams = overlayParams(quitButton);
+        WindowManager.LayoutParams loadingParams = overlayParams(loadingText);
+        if (quitParams == null || loadingParams == null) return;
+
+        loadingText.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
+        int buttonWidth = Math.max(quitButton.getWidth(), dp(BUTTON_MIN_WIDTH_DP));
+        int buttonHeight = Math.max(quitButton.getHeight(), dp(BUTTON_MIN_HEIGHT_DP));
+        int loadingWidth = Math.max(Math.max(loadingText.getWidth(), loadingText.getMeasuredWidth()), 1);
+        int loadingHeight = Math.max(Math.max(loadingText.getHeight(), loadingText.getMeasuredHeight()), dp(LOADING_TEXT_MIN_HEIGHT_DP));
+        Rect safe = safeScreenBounds(quitButton);
+
+        int desiredX = quitParams.x + buttonWidth + dp(LOADING_LEFT_MARGIN_DP);
+        if (desiredX + loadingWidth <= safe.right) {
+            loadingParams.x = desiredX;
+        } else {
+            int fallbackX = quitParams.x - loadingWidth - dp(LOADING_LEFT_MARGIN_DP);
+            loadingParams.x = clamp(fallbackX, safe.left, Math.max(safe.left, safe.right - loadingWidth));
+        }
+        loadingParams.y = clamp(quitParams.y + Math.max(0, (buttonHeight - loadingHeight) / 2), safe.top, Math.max(safe.top, safe.bottom - loadingHeight));
+        updateButtonLayout(loadingText, loadingParams);
     }
 
     private void showStatus(String message) {
@@ -515,6 +622,7 @@ public class OverlayService extends Service {
         cancelTimeout();
         closeReader();
         removeDebugOverlay();
+        hideLoadingIndicator();
         showStatus(message);
         restoreControlButtons();
         capturing = false;
@@ -523,7 +631,7 @@ public class OverlayService extends Service {
 
     private void projectionStopped() {
         if (capturing) fail(operationId, "MediaProjection session was stopped", null);
-        else { cancelTimeout(); closeReader(); busy = false; }
+        else { cancelTimeout(); closeReader(); hideLoadingIndicator(); busy = false; }
         if (virtualDisplay != null) virtualDisplay.release();
         virtualDisplay = null;
         projection = null;
@@ -565,6 +673,7 @@ public class OverlayService extends Service {
     private void restoreAllButtonPositions() {
         restoreButtonPosition(quitButton, QUIT_BUTTON_ID);
         restoreButtonPosition(solveButtonRow, SOLVE_BUTTON_ID);
+        positionLoadingIndicator();
     }
 
     private void restoreButtonPosition(View button, String buttonId) {
@@ -611,7 +720,7 @@ public class OverlayService extends Service {
                 .apply();
     }
 
-    private int defaultButtonTop(Button button, String buttonId) {
+    private int defaultButtonTop(View button, String buttonId) {
         if (QUIT_BUTTON_ID.equals(buttonId)) {
             int buttonHeight = Math.max(button.getHeight(), dp(BUTTON_MIN_HEIGHT_DP));
             return Math.max(0, dp(DEFAULT_SOLVE_TOP_DP) - buttonHeight - dp(DEFAULT_BUTTON_SPACING_DP));
