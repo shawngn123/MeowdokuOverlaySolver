@@ -254,10 +254,14 @@ public class OverlayService extends Service {
     private void process(Bitmap bitmap) {
         worker.execute(() -> pipeline.run(bitmap, new PuzzlePipeline.Listener() {
             @Override public void onDebug(DebugData data) { main.post(() -> showDebug(data)); }
-            @Override public void onBeforeGestures() { main.post(OverlayService.this::removeDebugOverlay); }
+            @Override public void onBeforeGestures() {
+                main.post(() -> {
+                    if (!DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
+                });
+            }
             @Override public void onFinished(String reason) {
                 main.post(() -> {
-                    removeDebugOverlay();
+                    if (!DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
                     if (reason != null) {
                         Log.i(TAG, reason);
                         showStatus(reason);

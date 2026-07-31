@@ -30,6 +30,7 @@ final class PuzzlePipeline {
             listener.onFinished("Puzzle not found");
             return;
         }
+        listener.onDebug(new DebugData(board, null, null, null));
 
         RegionMap regions;
         try {
@@ -39,6 +40,7 @@ final class PuzzlePipeline {
             listener.onFinished("Region detection failed");
             return;
         }
+        listener.onDebug(new DebugData(board, regions, null, null));
         if (regions == null || !regions.isValid() || regions.confidence < 0.010f) {
             listener.onFinished("Region detection failed");
             return;
@@ -56,6 +58,7 @@ final class PuzzlePipeline {
             listener.onFinished("Puzzle state invalid");
             return;
         }
+        listener.onDebug(new DebugData(board, regions, model.occupied, null));
 
         PuzzleSolver.Result solved = puzzleSolver.solve(model);
         if (solved.solutionCount == 0) {

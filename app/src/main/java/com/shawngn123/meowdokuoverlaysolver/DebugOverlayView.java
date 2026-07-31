@@ -43,6 +43,16 @@ final class DebugOverlayView extends View {
                     canvas.drawRect(board.cellRect(row, column), paint);
                 }
             }
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTextSize(Math.max(13f, board.averageCellSize() * 0.22f));
+            paint.setColor(Color.argb(235, 25, 25, 25));
+            for (int row = 0; row < regions.size; row++) {
+                for (int column = 0; column < regions.size; column++) {
+                    float centeredY = board.centerY(row) - (paint.ascent() + paint.descent()) * 0.5f;
+                    canvas.drawText(Integer.toString(regions.cells[row][column]), board.centerX(column), centeredY, paint);
+                }
+            }
+            paint.setTextAlign(Paint.Align.LEFT);
         }
         if (solution != null) {
             paint.setStyle(Paint.Style.STROKE);

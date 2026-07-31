@@ -109,17 +109,20 @@ final class RegionDetector {
     }
 
     private int sampleCellColor(Bitmap bitmap, RectF cell) {
-        int[] red = new int[36], green = new int[36], blue = new int[36];
-        int count = 0;
         float[] anchors = {0.22f, 0.34f, 0.66f, 0.78f};
+        int sampleCount = anchors.length * anchors.length * 9;
+        int[] red = new int[sampleCount];
+        int[] green = new int[sampleCount];
+        int[] blue = new int[sampleCount];
+        int count = 0;
         float radiusX = Math.max(1f, cell.width() * 0.035f);
         float radiusY = Math.max(1f, cell.height() * 0.035f);
         for (float ax : anchors) {
             for (float ay : anchors) {
                 float cx = cell.left + cell.width() * ax;
                 float cy = cell.top + cell.height() * ay;
-                for (int sy = -1; sy <= 1 && count < red.length; sy++) {
-                    for (int sx = -1; sx <= 1 && count < red.length; sx++) {
+                for (int sy = -1; sy <= 1; sy++) {
+                    for (int sx = -1; sx <= 1; sx++) {
                         int pixel = bitmap.getPixel(
                                 clamp(Math.round(cx + sx * radiusX), 0, bitmap.getWidth() - 1),
                                 clamp(Math.round(cy + sy * radiusY), 0, bitmap.getHeight() - 1)
@@ -130,15 +133,17 @@ final class RegionDetector {
                         count++;
                     }
                 }
-                if (count >= red.length) break;
             }
-            if (count >= red.length) break;
         }
-        java.util.Arrays.sort(red, 0, count);
-        java.util.Arrays.sort(green, 0, count);
-        java.util.Arrays.sort(blue, 0, count);
-        int middle = count / 2;
-        return Color.rgb(red[middle], green[middle], blue[middle]);
+        java.util.Arrays.sort(red);
+        java.util.Arrays.sort(green);
+        java.util.Arrays.sort(blue);
+        return Color.rgb(median(red), median(green), median(blue));
+    }
+
+    private int median(int[] values) {
+        int middle = values.length / 2;
+        return (values[middle - 1] + values[middle]) / 2;
     }
 
     private float colorDistance(int first, int second) {
