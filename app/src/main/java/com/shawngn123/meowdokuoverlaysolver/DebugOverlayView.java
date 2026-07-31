@@ -11,6 +11,7 @@ final class DebugOverlayView extends View {
     private BoardGeometry board;
     private RegionMap regions;
     private boolean[][] cats;
+    private int[] solution;
 
     DebugOverlayView(Context context) {
         super(context);
@@ -21,6 +22,7 @@ final class DebugOverlayView extends View {
         this.board = data.board;
         this.regions = data.regions;
         this.cats = data.cats;
+        this.solution = data.solutionColumns;
         invalidate();
     }
 
@@ -42,15 +44,18 @@ final class DebugOverlayView extends View {
                 }
             }
         }
+        if (solution != null) {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(Math.max(4f, board.averageCellSize() * 0.07f));
+            paint.setColor(Color.argb(245, 255, 40, 220));
+            float solvedRadius = Math.max(8f, board.averageCellSize() * 0.28f);
+            for (int row = 0; row < solution.length; row++) canvas.drawCircle(board.centerX(solution[row]), board.centerY(row), solvedRadius, paint);
+        }
         if (cats != null) {
             paint.setStyle(Paint.Style.FILL);
             paint.setColor(Color.argb(235, 255, 235, 40));
             float catRadius = Math.max(6f, board.averageCellSize() * 0.20f);
-            for (int row = 0; row < board.rows; row++) {
-                for (int column = 0; column < board.columns; column++) {
-                    if (cats[row][column]) canvas.drawCircle(board.centerX(column), board.centerY(row), catRadius, paint);
-                }
-            }
+            for (int row = 0; row < board.rows; row++) for (int column = 0; column < board.columns; column++) if (cats[row][column]) canvas.drawCircle(board.centerX(column), board.centerY(row), catRadius, paint);
         }
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(5f);

@@ -8,6 +8,7 @@ final class PuzzlePipeline {
     private final BoardDetector boardDetector = new BoardDetector();
     private final RegionDetector regionDetector = new RegionDetector();
     private final PuzzleReader puzzleReader = new PuzzleReader();
+    private final PuzzleSolver puzzleSolver = new PuzzleSolver();
 
     interface Listener {
         void onDebug(DebugData data);
@@ -55,7 +56,17 @@ final class PuzzlePipeline {
             return;
         }
 
-        listener.onDebug(new DebugData(board, regions, model.occupied, null));
+        PuzzleSolver.Result solved = puzzleSolver.solve(model);
+        if (solved.solutionCount == 0) {
+            listener.onFinished("No solution");
+            return;
+        }
+        if (solved.solutionCount > 1) {
+            listener.onFinished("Multiple solutions");
+            return;
+        }
+
+        listener.onDebug(new DebugData(board, regions, model.occupied, solved.columns));
         listener.onFinished(null);
     }
 }
