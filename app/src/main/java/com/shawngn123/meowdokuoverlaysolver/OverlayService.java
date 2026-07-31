@@ -31,6 +31,7 @@ import android.view.Gravity;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.widget.Button;
+import android.widget.TextView;
 
 import java.nio.ByteBuffer;
 import java.util.concurrent.ExecutorService;
@@ -50,6 +51,7 @@ public class OverlayService extends Service {
     private WindowManager windows;
     private Button solveButton;
     private DebugOverlayView debugOverlay;
+    private TextView statusBubble;
     private MediaProjection projection;
     private VirtualDisplay virtualDisplay;
     private ImageReader reader;
@@ -105,6 +107,7 @@ public class OverlayService extends Service {
         cancelTimeout();
         closeReader();
         removeDebugOverlay();
+        removeStatusBubble();
         worker.shutdownNow();
         if (solveButton != null) try { windows.removeView(solveButton); } catch (RuntimeException ignored) { }
         solveButton = null;
@@ -151,6 +154,7 @@ public class OverlayService extends Service {
         if (busy) return;
         busy = true;
         removeDebugOverlay();
+        removeStatusBubble();
         if (!hasProjectionPermission()) { fail("MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
@@ -227,9 +231,14 @@ public class OverlayService extends Service {
     private void process(Bitmap bitmap) {
         worker.execute(() -> pipeline.run(bitmap, new PuzzlePipeline.Listener() {
             @Override public void onDebug(DebugData data) { main.post(() -> showDebug(data)); }
+            @Override public void onBeforeGestures() { main.post(OverlayService.this::removeDebugOverlay); }
             @Override public void onFinished(String reason) {
                 main.post(() -> {
-                    if (reason != null) Log.i(TAG, reason);
+                    removeDebugOverlay();
+                    if (reason != null) {
+                        Log.i(TAG, reason);
+                        showStatus(reason);
+                    }
                     busy = false;
                 });
             }
@@ -258,6 +267,37 @@ public class OverlayService extends Service {
         debugOverlay = null;
     }
 
+    private void showStatus(String message) {
+        removeStatusBubble();
+        statusBubble = new TextView(this);
+        statusBubble.setText(message);
+        statusBubble.setTextColor(Color.WHITE);
+        statusBubble.setTextSize(15f);
+        statusBubble.setGravity(Gravity.CENTER);
+        statusBubble.setPadding(dp(16), dp(9), dp(16), dp(9));
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(Color.argb(225, 45, 45, 45));
+        background.setCornerRadius(dp(18));
+        statusBubble.setBackground(background);
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                PixelFormat.TRANSLUCENT
+        );
+        params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+        params.y = dp(90);
+        windows.addView(statusBubble, params);
+        main.postDelayed(this::removeStatusBubble, 1500);
+    }
+
+    private void removeStatusBubble() {
+        if (statusBubble == null) return;
+        try { windows.removeView(statusBubble); } catch (RuntimeException ignored) { }
+        statusBubble = null;
+    }
+
     private void fail(String reason, Throwable error) {
         String message = reason == null || reason.isEmpty() ? "Unknown error" : reason;
         if (error == null) Log.e(TAG, "Screen capture failed: " + message);
@@ -265,6 +305,8 @@ public class OverlayService extends Service {
         detachSurface();
         cancelTimeout();
         closeReader();
+        removeDebugOverlay();
+        showStatus(message);
         capturing = false;
         busy = false;
     }

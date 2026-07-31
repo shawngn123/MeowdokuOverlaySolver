@@ -12,6 +12,7 @@ final class PuzzlePipeline {
 
     interface Listener {
         void onDebug(DebugData data);
+        void onBeforeGestures();
         void onFinished(String failureReason);
     }
 
@@ -67,6 +68,12 @@ final class PuzzlePipeline {
         }
 
         listener.onDebug(new DebugData(board, regions, model.occupied, solved.columns));
-        listener.onFinished(null);
+        listener.onBeforeGestures();
+        SolverAccessibilityService.tapMissing(
+                board,
+                model.occupied,
+                solved.columns,
+                (success, reason) -> listener.onFinished(success ? null : reason)
+        );
     }
 }
