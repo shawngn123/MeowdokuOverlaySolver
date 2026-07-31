@@ -16,6 +16,8 @@ public class SolverAccessibilityService extends AccessibilityService {
         void complete(boolean success, String reason);
     }
 
+    private static final int CELLS_PER_BATCH = 4;
+    private static final long CELL_WINDOW_MS = 68;
     private static volatile SolverAccessibilityService instance;
     private final Handler main = new Handler(Looper.getMainLooper());
     private int sequenceId;
@@ -53,10 +55,10 @@ public class SolverAccessibilityService extends AccessibilityService {
 
     private void startSequence(List<PointF> points, Completion completion) {
         int id = ++sequenceId;
-        main.post(() -> dispatchNext(id, points, 0, completion));
+        main.post(() -> dispatchBatch(id, points, 0, completion));
     }
 
-    private void dispatchNext(int id, List<PointF> points, int index, Completion completion) {
+    private void dispatchBatch(int id, List<PointF> points, int index, Completion completion) {
         if (id != sequenceId || instance != this) {
             completion.complete(false, "Accessibility gesture sequence was interrupted");
             return;
@@ -66,25 +68,34 @@ public class SolverAccessibilityService extends AccessibilityService {
             return;
         }
 
-        PointF point = points.get(index);
-        Path first = new Path();
-        first.moveTo(point.x, point.y);
-        Path second = new Path();
-        second.moveTo(point.x, point.y);
-        GestureDescription gesture = new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(first, 0, 24))
-                .addStroke(new GestureDescription.StrokeDescription(second, 78, 24))
-                .build();
+        int end = Math.min(points.size(), index + CELLS_PER_BATCH);
+        GestureDescription.Builder builder = new GestureDescription.Builder();
+        for (int i = index; i < end; i++) {
+            PointF point = points.get(i);
+            long start = (i - index) * CELL_WINDOW_MS;
+            Path first = new Path();
+            first.moveTo(point.x, point.y);
+            Path second = new Path();
+            second.moveTo(point.x, point.y);
+            builder.addStroke(new GestureDescription.StrokeDescription(first, start, 16));
+            builder.addStroke(new GestureDescription.StrokeDescription(second, start + 46, 16));
+        }
 
-        boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
+        boolean accepted = dispatchGesture(builder.build(), new GestureResultCallback() {
             @Override public void onCompleted(GestureDescription gestureDescription) {
-                dispatchNext(id, points, index + 1, completion);
+                dispatchBatch(id, points, end, completion);
             }
 
             @Override public void onCancelled(GestureDescription gestureDescription) {
-                completion.complete(false, "Accessibility gesture was cancelled");
+                if (id == sequenceId) {
+                    sequenceId++;
+                    completion.complete(false, "Accessibility gesture was cancelled");
+                }
             }
         }, main);
-        if (!accepted) completion.complete(false, "Accessibility rejected the gesture");
+        if (!accepted && id == sequenceId) {
+            sequenceId++;
+            completion.complete(false, "Accessibility rejected the gesture");
+        }
     }
 }

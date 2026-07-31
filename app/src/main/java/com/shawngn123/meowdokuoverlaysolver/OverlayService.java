@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
@@ -57,6 +58,7 @@ public class OverlayService extends Service {
     private VirtualDisplay virtualDisplay;
     private ImageReader reader;
     private Bitmap screenshot;
+    private Bitmap paddedBuffer;
     private boolean capturing;
     private boolean busy;
     private int displayWidth;
@@ -118,7 +120,9 @@ public class OverlayService extends Service {
         projection = null;
         if (old != null) old.stop();
         if (screenshot != null) screenshot.recycle();
+        if (paddedBuffer != null && paddedBuffer != screenshot) paddedBuffer.recycle();
         screenshot = null;
+        paddedBuffer = null;
         clearPermission();
         super.onDestroy();
     }
@@ -209,7 +213,6 @@ public class OverlayService extends Service {
             detachSurface();
             cancelTimeout();
             Bitmap next = toBitmap(image);
-            if (screenshot != null) screenshot.recycle();
             screenshot = next;
             capturing = false;
             restoreSolveButton();
@@ -227,13 +230,25 @@ public class OverlayService extends Service {
         ByteBuffer buffer = plane.getBuffer();
         int width = image.getWidth(), height = image.getHeight();
         int paddedWidth = width + (plane.getRowStride() - plane.getPixelStride() * width) / plane.getPixelStride();
-        Bitmap padded = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888);
+        if (paddedWidth == width) {
+            screenshot = ensureBitmap(screenshot, width, height);
+            buffer.rewind();
+            screenshot.copyPixelsFromBuffer(buffer);
+            return screenshot;
+        }
+        paddedBuffer = ensureBitmap(paddedBuffer, paddedWidth, height);
+        screenshot = ensureBitmap(screenshot, width, height);
         buffer.rewind();
-        padded.copyPixelsFromBuffer(buffer);
-        if (paddedWidth == width) return padded;
-        Bitmap cropped = Bitmap.createBitmap(padded, 0, 0, width, height);
-        padded.recycle();
-        return cropped;
+        paddedBuffer.copyPixelsFromBuffer(buffer);
+        Canvas canvas = new Canvas(screenshot);
+        canvas.drawBitmap(paddedBuffer, new Rect(0, 0, width, height), new Rect(0, 0, width, height), null);
+        return screenshot;
+    }
+
+    private Bitmap ensureBitmap(Bitmap bitmap, int width, int height) {
+        if (bitmap != null && !bitmap.isRecycled() && bitmap.getWidth() == width && bitmap.getHeight() == height) return bitmap;
+        if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
     private void process(Bitmap bitmap) {
@@ -254,6 +269,7 @@ public class OverlayService extends Service {
     }
 
     private void showDebug(DebugData data) {
+        if (!DebugFlags.SHOW_OVERLAYS) return;
         removeDebugOverlay();
         debugOverlay = new DebugOverlayView(this);
         debugOverlay.show(data);

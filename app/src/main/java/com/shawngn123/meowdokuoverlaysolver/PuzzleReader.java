@@ -56,7 +56,7 @@ final class PuzzleReader {
     }
 
     private CellScore scoreCell(Bitmap bitmap, RectF cell, int background) {
-        int steps = 22;
+        int steps = 17;
         int foreground = 0;
         int dark = 0;
         int edges = 0;
