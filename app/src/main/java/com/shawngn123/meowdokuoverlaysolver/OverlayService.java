@@ -38,21 +38,20 @@ import java.util.concurrent.Executors;
 
 public class OverlayService extends Service {
     private static final String TAG = "MeowdokuSolver";
-    private static final String CHANNEL_ID = "meowdoku_overlay";
+    private static final String CHANNEL = "meowdoku_overlay";
     private static final int NOTIFICATION_ID = 1;
-
     private static Intent permissionData;
     private static int permissionResult = Activity.RESULT_CANCELED;
     private static boolean permissionConsumed;
 
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final ExecutorService processor = Executors.newSingleThreadExecutor();
-    private final BoardDetector boardDetector = new BoardDetector();
-    private WindowManager windowManager;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    private final PuzzlePipeline pipeline = new PuzzlePipeline();
+    private WindowManager windows;
     private Button solveButton;
     private DebugOverlayView debugOverlay;
     private MediaProjection projection;
-    private VirtualDisplay display;
+    private VirtualDisplay virtualDisplay;
     private ImageReader reader;
     private Bitmap screenshot;
     private boolean capturing;
@@ -62,9 +61,9 @@ public class OverlayService extends Service {
     private int displayDensity;
     private Runnable timeout;
 
-    public static synchronized void setProjectionPermission(int resultCode, Intent data) {
-        permissionResult = resultCode;
-        permissionData = new Intent(data);
+    public static synchronized void setProjectionPermission(int result, Intent data) {
+        permissionResult = result;
+        permissionData = data == null ? null : new Intent(data);
         permissionConsumed = false;
     }
 
@@ -86,49 +85,42 @@ public class OverlayService extends Service {
         permissionConsumed = false;
     }
 
-    @Override
-    public void onCreate() {
+    @Override public void onCreate() {
         super.onCreate();
+        windows = (WindowManager) getSystemService(WINDOW_SERVICE);
         createChannel();
         startForegroundMode(false);
-        if (!Settings.canDrawOverlays(this)) {
-            stopSelf();
-            return;
-        }
+        if (!Settings.canDrawOverlays(this)) { stopSelf(); return; }
         showSolveButton();
     }
 
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (solveButton == null && Settings.canDrawOverlays(this)) showSolveButton();
         return START_NOT_STICKY;
     }
 
-    @Override
-    public void onDestroy() {
+    @Override public IBinder onBind(Intent intent) { return null; }
+
+    @Override public void onDestroy() {
         cancelTimeout();
         closeReader();
         removeDebugOverlay();
-        processor.shutdownNow();
-        if (windowManager != null && solveButton != null) windowManager.removeView(solveButton);
+        worker.shutdownNow();
+        if (solveButton != null) try { windows.removeView(solveButton); } catch (RuntimeException ignored) { }
         solveButton = null;
-        if (display != null) display.release();
-        display = null;
-        MediaProjection oldProjection = projection;
+        if (virtualDisplay != null) virtualDisplay.release();
+        virtualDisplay = null;
+        MediaProjection old = projection;
         projection = null;
-        if (oldProjection != null) oldProjection.stop();
+        if (old != null) old.stop();
         if (screenshot != null) screenshot.recycle();
         screenshot = null;
         clearPermission();
         super.onDestroy();
     }
 
-    @Override
-    public IBinder onBind(Intent intent) { return null; }
-
     private void showSolveButton() {
         if (solveButton != null) return;
-        windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         solveButton = new Button(this);
         solveButton.setText("SOLVE");
         solveButton.setTextColor(Color.WHITE);
@@ -152,55 +144,49 @@ public class OverlayService extends Service {
         params.gravity = Gravity.TOP | Gravity.END;
         params.x = dp(16);
         params.y = dp(180);
-        windowManager.addView(solveButton, params);
+        windows.addView(solveButton, params);
     }
 
     private void captureOnce() {
         if (busy) return;
-        removeDebugOverlay();
         busy = true;
-        if (!hasProjectionPermission()) {
-            fail("MediaProjection permission is not available", null);
-            return;
-        }
+        removeDebugOverlay();
+        if (!hasProjectionPermission()) { fail("MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
             int[] size = screenSize();
             reader = ImageReader.newInstance(size[0], size[1], PixelFormat.RGBA_8888, 2);
-            reader.setOnImageAvailableListener(this::imageAvailable, handler);
-            if (projection == null) {
-                startForegroundMode(true);
-                Intent token = consumePermission();
-                if (token == null) throw new IllegalStateException("MediaProjection permission token was already used");
-                MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-                projection = manager.getMediaProjection(permissionResult(), token);
-                if (projection == null) throw new IllegalStateException("MediaProjectionManager returned null");
-                projection.registerCallback(new MediaProjection.Callback() {
-                    @Override public void onStop() { projectionStopped(); }
-                }, handler);
-                displayWidth = size[0];
-                displayHeight = size[1];
-                displayDensity = size[2];
-                display = projection.createVirtualDisplay(
-                        "MeowdokuSingleCapture", displayWidth, displayHeight, displayDensity,
-                        DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, handler
-                );
-                if (display == null) throw new IllegalStateException("Could not create virtual display");
-            } else {
-                if (display == null) throw new IllegalStateException("Virtual display is unavailable");
+            reader.setOnImageAvailableListener(this::imageAvailable, main);
+            if (projection == null) createProjection(size);
+            else {
+                if (virtualDisplay == null) throw new IllegalStateException("Virtual display is unavailable");
                 if (displayWidth != size[0] || displayHeight != size[1] || displayDensity != size[2]) {
-                    display.resize(size[0], size[1], size[2]);
-                    displayWidth = size[0];
-                    displayHeight = size[1];
-                    displayDensity = size[2];
+                    virtualDisplay.resize(size[0], size[1], size[2]);
+                    displayWidth = size[0]; displayHeight = size[1]; displayDensity = size[2];
                 }
-                display.setSurface(reader.getSurface());
+                virtualDisplay.setSurface(reader.getSurface());
             }
             timeout = () -> fail("Timed out waiting for a screen image", null);
-            handler.postDelayed(timeout, 3000);
-        } catch (Exception error) {
-            fail(error.getMessage(), error);
-        }
+            main.postDelayed(timeout, 3000);
+        } catch (Exception error) { fail(error.getMessage(), error); }
+    }
+
+    private void createProjection(int[] size) {
+        startForegroundMode(true);
+        Intent token = consumePermission();
+        if (token == null) throw new IllegalStateException("MediaProjection permission token was already used");
+        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        projection = manager.getMediaProjection(permissionResult(), token);
+        if (projection == null) throw new IllegalStateException("MediaProjectionManager returned null");
+        projection.registerCallback(new MediaProjection.Callback() {
+            @Override public void onStop() { projectionStopped(); }
+        }, main);
+        displayWidth = size[0]; displayHeight = size[1]; displayDensity = size[2];
+        virtualDisplay = projection.createVirtualDisplay(
+                "MeowdokuSingleCapture", displayWidth, displayHeight, displayDensity,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, reader.getSurface(), null, main
+        );
+        if (virtualDisplay == null) throw new IllegalStateException("Could not create virtual display");
     }
 
     private void imageAvailable(ImageReader source) {
@@ -211,19 +197,16 @@ public class OverlayService extends Service {
             if (image == null) return;
             detachSurface();
             cancelTimeout();
-            Bitmap bitmap = toBitmap(image);
+            Bitmap next = toBitmap(image);
             if (screenshot != null) screenshot.recycle();
-            screenshot = bitmap;
+            screenshot = next;
             capturing = false;
             Log.i(TAG, "Screen captured successfully");
-            processBoard(bitmap);
-        } catch (Exception error) {
-            fail(error.getMessage(), error);
-        } finally {
-            if (image != null) {
-                image.close();
-                closeReader();
-            }
+            process(next);
+        } catch (Exception error) { fail(error.getMessage(), error); }
+        finally {
+            if (image != null) image.close();
+            closeReader();
         }
     }
 
@@ -231,8 +214,7 @@ public class OverlayService extends Service {
         Image.Plane plane = image.getPlanes()[0];
         ByteBuffer buffer = plane.getBuffer();
         int width = image.getWidth(), height = image.getHeight();
-        int pixelStride = plane.getPixelStride(), rowStride = plane.getRowStride();
-        int paddedWidth = width + (rowStride - pixelStride * width) / pixelStride;
+        int paddedWidth = width + (plane.getRowStride() - plane.getPixelStride() * width) / plane.getPixelStride();
         Bitmap padded = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888);
         buffer.rewind();
         padded.copyPixelsFromBuffer(buffer);
@@ -240,6 +222,40 @@ public class OverlayService extends Service {
         Bitmap cropped = Bitmap.createBitmap(padded, 0, 0, width, height);
         padded.recycle();
         return cropped;
+    }
+
+    private void process(Bitmap bitmap) {
+        worker.execute(() -> pipeline.run(bitmap, new PuzzlePipeline.Listener() {
+            @Override public void onDebug(DebugData data) { main.post(() -> showDebug(data)); }
+            @Override public void onFinished(String reason) {
+                main.post(() -> {
+                    if (reason != null) Log.i(TAG, reason);
+                    busy = false;
+                });
+            }
+        }));
+    }
+
+    private void showDebug(DebugData data) {
+        removeDebugOverlay();
+        debugOverlay = new DebugOverlayView(this);
+        debugOverlay.show(data);
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT
+        );
+        params.gravity = Gravity.TOP | Gravity.START;
+        windows.addView(debugOverlay, params);
+        main.postDelayed(this::removeDebugOverlay, 2500);
+    }
+
+    private void removeDebugOverlay() {
+        if (debugOverlay == null) return;
+        try { windows.removeView(debugOverlay); } catch (RuntimeException ignored) { }
+        debugOverlay = null;
     }
 
     private void fail(String reason, Throwable error) {
@@ -253,59 +269,18 @@ public class OverlayService extends Service {
         busy = false;
     }
 
-    private void processBoard(Bitmap bitmap) {
-        processor.execute(() -> {
-            BoardGeometry board = null;
-            try { board = boardDetector.detect(bitmap); }
-            catch (RuntimeException error) { Log.e(TAG, "Board detection failed", error); }
-            BoardGeometry detected = board;
-            handler.post(() -> {
-                if (detected == null) {
-                    Log.i(TAG, "Puzzle not found");
-                    busy = false;
-                    return;
-                }
-                showBoardDebug(detected);
-                busy = false;
-            });
-        });
-    }
-
-    private void showBoardDebug(BoardGeometry board) {
-        removeDebugOverlay();
-        debugOverlay = new DebugOverlayView(this);
-        debugOverlay.showBoard(board);
-        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT
-        );
-        params.gravity = Gravity.TOP | Gravity.START;
-        windowManager.addView(debugOverlay, params);
-        handler.postDelayed(this::removeDebugOverlay, 2500);
-    }
-
-    private void removeDebugOverlay() {
-        if (debugOverlay == null || windowManager == null) return;
-        try { windowManager.removeView(debugOverlay); } catch (RuntimeException ignored) { }
-        debugOverlay = null;
-    }
-
     private void projectionStopped() {
         if (capturing) fail("MediaProjection session was stopped", null);
         else { cancelTimeout(); closeReader(); busy = false; }
-        if (display != null) display.release();
-        display = null;
+        if (virtualDisplay != null) virtualDisplay.release();
+        virtualDisplay = null;
         projection = null;
         clearPermission();
     }
 
     private void detachSurface() {
-        if (display == null) return;
-        try { display.setSurface(null); }
-        catch (RuntimeException error) { Log.e(TAG, "Could not detach capture surface", error); }
+        if (virtualDisplay == null) return;
+        try { virtualDisplay.setSurface(null); } catch (RuntimeException error) { Log.e(TAG, "Could not detach capture surface", error); }
     }
 
     private void closeReader() {
@@ -317,46 +292,44 @@ public class OverlayService extends Service {
 
     private void cancelTimeout() {
         if (timeout == null) return;
-        handler.removeCallbacks(timeout);
+        main.removeCallbacks(timeout);
         timeout = null;
     }
 
     private int[] screenSize() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            WindowMetrics metrics = windowManager.getMaximumWindowMetrics();
+            WindowMetrics metrics = windows.getMaximumWindowMetrics();
             Rect bounds = metrics.getBounds();
             return new int[]{bounds.width(), bounds.height(), getResources().getConfiguration().densityDpi};
         }
         DisplayMetrics metrics = new DisplayMetrics();
-        windowManager.getDefaultDisplay().getRealMetrics(metrics);
+        windows.getDefaultDisplay().getRealMetrics(metrics);
         return new int[]{metrics.widthPixels, metrics.heightPixels, metrics.densityDpi};
     }
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
-        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(CHANNEL, getString(R.string.notification_channel_name), NotificationManager.IMPORTANCE_LOW);
         channel.setDescription("Keeps the floating SOLVE button available.");
         getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
-    private void startForegroundMode(boolean includeProjection) {
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        Notification notification = new Notification.Builder(this, CHANNEL_ID)
+    private void startForegroundMode(boolean projectionMode) {
+        PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification notification = new Notification.Builder(this, CHANNEL)
                 .setSmallIcon(R.drawable.ic_app)
                 .setContentTitle(getString(R.string.notification_title))
                 .setContentText(getString(R.string.notification_text))
-                .setContentIntent(pendingIntent)
+                .setContentIntent(open)
                 .setOngoing(true)
                 .build();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             int types = ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE;
-            if (includeProjection) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
+            if (projectionMode) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION;
             startForeground(NOTIFICATION_ID, notification, types);
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && includeProjection) {
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && projectionMode) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION);
-        } else {
-            startForeground(NOTIFICATION_ID, notification);
-        }
+        } else startForeground(NOTIFICATION_ID, notification);
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
