@@ -1,6 +1,7 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
 import android.app.Activity;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -44,21 +45,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-
-        if (requestCode != SCREEN_CAPTURE_REQUEST) {
-            return;
-        }
-
-        if (resultCode == RESULT_OK && data != null) {
-            OverlayService.setProjectionPermission(resultCode, data);
-        }
-
+        if (requestCode != SCREEN_CAPTURE_REQUEST) return;
+        if (resultCode == RESULT_OK && data != null) OverlayService.setProjectionPermission(resultCode, data);
         updatePermissionState();
     }
 
     private LinearLayout createContentView() {
         int padding = dp(24);
-
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -70,20 +63,14 @@ public class MainActivity extends Activity {
         title.setTextSize(26);
         title.setTextColor(Color.rgb(40, 32, 28));
         title.setGravity(Gravity.CENTER);
-        root.addView(title, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        ));
+        root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView description = new TextView(this);
         description.setText("Grant the required permissions. The floating SOLVE button will then appear over other apps.");
         description.setTextSize(17);
         description.setTextColor(Color.rgb(80, 67, 60));
         description.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams descriptionParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         descriptionParams.topMargin = dp(24);
         root.addView(description, descriptionParams);
 
@@ -91,23 +78,16 @@ public class MainActivity extends Activity {
         statusText.setTextSize(18);
         statusText.setTextColor(Color.rgb(40, 32, 28));
         statusText.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams statusParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         statusParams.topMargin = dp(32);
         root.addView(statusText, statusParams);
 
         permissionButton = new Button(this);
         permissionButton.setAllCaps(false);
         permissionButton.setTextSize(17);
-        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-        );
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         buttonParams.topMargin = dp(24);
         root.addView(permissionButton, buttonParams);
-
         return root;
     }
 
@@ -119,7 +99,6 @@ public class MainActivity extends Activity {
             permissionButton.setOnClickListener(v -> requestScreenCapturePermission());
             return;
         }
-
         if (!Settings.canDrawOverlays(this)) {
             statusText.setText("Display-over-other-apps permission is required.");
             permissionButton.setText("Grant overlay permission");
@@ -127,7 +106,13 @@ public class MainActivity extends Activity {
             permissionButton.setOnClickListener(v -> openOverlayPermissionScreen());
             return;
         }
-
+        if (!accessibilityEnabled()) {
+            statusText.setText("Enable Meowdoku Solver Taps in Accessibility settings.");
+            permissionButton.setText("Open Accessibility settings");
+            permissionButton.setEnabled(true);
+            permissionButton.setOnClickListener(v -> openAccessibilitySettings());
+            return;
+        }
         statusText.setText("Permissions granted. The SOLVE button is active.");
         permissionButton.setText("Overlay active");
         permissionButton.setEnabled(false);
@@ -136,39 +121,40 @@ public class MainActivity extends Activity {
     }
 
     private void requestScreenCapturePermission() {
-        MediaProjectionManager manager = (MediaProjectionManager)
-                getSystemService(Context.MEDIA_PROJECTION_SERVICE);
-
+        MediaProjectionManager manager = (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
         Intent captureIntent;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            captureIntent = manager.createScreenCaptureIntent(
-                    MediaProjectionConfig.createConfigForDefaultDisplay()
-            );
+            captureIntent = manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay());
         } else {
             captureIntent = manager.createScreenCaptureIntent();
         }
-
         startActivityForResult(captureIntent, SCREEN_CAPTURE_REQUEST);
     }
 
     private void openOverlayPermissionScreen() {
-        Intent intent = new Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:" + getPackageName())
-        );
-        startActivity(intent);
+        startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
+    }
+
+    private boolean accessibilityEnabled() {
+        String enabled = Settings.Secure.getString(getContentResolver(), Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        if (enabled == null || enabled.isEmpty()) return SolverAccessibilityService.isConnected();
+        ComponentName expected = new ComponentName(this, SolverAccessibilityService.class);
+        for (String value : enabled.split(":")) {
+            ComponentName component = ComponentName.unflattenFromString(value);
+            if (expected.equals(component)) return true;
+        }
+        return SolverAccessibilityService.isConnected();
+    }
+
+    private void openAccessibilitySettings() {
+        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
     }
 
     private void startOverlayService() {
         Intent serviceIntent = new Intent(this, OverlayService.class);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(serviceIntent);
-        } else {
-            startService(serviceIntent);
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent);
+        else startService(serviceIntent);
     }
 
-    private int dp(int value) {
-        return Math.round(value * getResources().getDisplayMetrics().density);
-    }
+    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
 }

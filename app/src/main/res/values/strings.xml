@@ -4,4 +4,6 @@
     <string name="notification_channel_name">Solver overlay</string>
     <string name="notification_title">Meowdoku solver ready</string>
     <string name="notification_text">The SOLVE overlay button is active.</string>
+    <string name="accessibility_service_label">Meowdoku Solver Taps</string>
+    <string name="accessibility_service_description">Double taps solved Meowdoku cells after you press SOLVE.</string>
 </resources>
