@@ -20,8 +20,8 @@ final class PuzzleModel {
     }
 
     String validationError() {
-        if (size < 4 || size > 12) {
-            return "Unsupported board size " + size + ".";
+        if (size <= 0) {
+            return "BoardSize must be greater than 0; found " + size + ".";
         }
         if (regions == null) {
             return "Regions are missing.";

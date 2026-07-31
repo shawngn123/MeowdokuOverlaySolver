@@ -9,12 +9,17 @@ import java.util.Comparator;
 import java.util.List;
 
 final class BoardDetector {
-    private static final int MIN_N = 4;
-    private static final int MAX_N = 12;
+    private static final int MIN_GRID_SIZE = 2;
     private static final int MAX_DIM = 720;
+    private static final float MIN_CELL_PIXELS = 7f;
 
     BoardGeometry detect(Bitmap source) {
+        return detect(source, null);
+    }
+
+    BoardGeometry detect(Bitmap source, Integer expectedSize) {
         if (source == null || source.isRecycled()) return null;
+        if (expectedSize != null && expectedSize <= 0) return null;
         float scale = Math.min(1f, MAX_DIM / (float) Math.max(source.getWidth(), source.getHeight()));
         int w = Math.max(1, Math.round(source.getWidth() * scale));
         int h = Math.max(1, Math.round(source.getHeight() * scale));
@@ -40,8 +45,8 @@ final class BoardDetector {
         float meanEdge = count == 0 ? 1f : total / (float) count;
         List<Peak> xPeaks = peaks(project(vx, w, h, true));
         List<Peak> yPeaks = peaks(project(hy, w, h, false));
-        List<Seq> xs = sequences(xPeaks, w, h);
-        List<Seq> ys = sequences(yPeaks, h, w);
+        List<Seq> xs = sequences(xPeaks, w, h, expectedSize);
+        List<Seq> ys = sequences(yPeaks, h, w, expectedSize);
 
         Candidate best = null;
         for (Seq x : xs) for (Seq y : ys) {
@@ -105,7 +110,7 @@ final class BoardDetector {
         return kept;
     }
 
-    private List<Seq> sequences(List<Peak> peaks, int axis, int cross) {
+    private List<Seq> sequences(List<Peak> peaks, int axis, int cross, Integer expectedSize) {
         List<Seq> out = new ArrayList<>();
         float minSide = Math.min(axis, cross) * 0.30f, maxSide = Math.min(axis, cross) * 0.98f;
         float max = 1f;
@@ -113,9 +118,11 @@ final class BoardDetector {
         for (int a = 0; a < peaks.size() - 1; a++) for (int b = a + 1; b < peaks.size(); b++) {
             float side = peaks.get(b).p - peaks.get(a).p;
             if (side < minSide || side > maxSide) continue;
-            for (int n = MIN_N; n <= MAX_N; n++) {
+            int minN = expectedSize == null ? MIN_GRID_SIZE : expectedSize;
+            int maxN = expectedSize == null ? Math.max(MIN_GRID_SIZE, (int) Math.floor(side / MIN_CELL_PIXELS)) : expectedSize;
+            for (int n = minN; n <= maxN; n++) {
                 float cell = side / n;
-                if (cell < 9f) continue;
+                if (cell < MIN_CELL_PIXELS) continue;
                 float tol = Math.max(2.5f, cell * 0.17f), sum = 0f, error = 0f;
                 int matched = 0;
                 for (int k = 0; k <= n; k++) {

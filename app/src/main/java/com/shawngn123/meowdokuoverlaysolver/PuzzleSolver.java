@@ -1,6 +1,7 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
 import java.util.Arrays;
+import java.util.BitSet;
 
 final class PuzzleSolver {
     static final class Result {
@@ -41,12 +42,10 @@ final class PuzzleSolver {
             }
             return;
         }
-        int mask = candidates(row, assignment);
-        while (mask != 0 && solutionCount < 2) {
-            int bit = mask & -mask;
-            mask -= bit;
+        BitSet mask = candidates(row, assignment);
+        for (int column = mask.nextSetBit(0); column >= 0 && solutionCount < 2; column = mask.nextSetBit(column + 1)) {
             int[] next = assignment.clone();
-            next[row] = Integer.numberOfTrailingZeros(bit);
+            next[row] = column;
             if (isPartialValid(next)) search(next);
         }
     }
@@ -56,23 +55,24 @@ final class PuzzleSolver {
         do {
             changed = false;
             if (!isPartialValid(assignment)) return false;
-            int[] masks = new int[size];
+            BitSet[] masks = new BitSet[size];
             for (int row = 0; row < size; row++) {
                 if (assignment[row] >= 0) continue;
                 masks[row] = candidates(row, assignment);
-                if (masks[row] == 0) return false;
-                if (Integer.bitCount(masks[row]) == 1) {
-                    assignment[row] = Integer.numberOfTrailingZeros(masks[row]);
+                int count = masks[row].cardinality();
+                if (count == 0) return false;
+                if (count == 1) {
+                    assignment[row] = masks[row].nextSetBit(0);
                     changed = true;
                 }
             }
             if (changed) continue;
-            int usedColumns = usedColumns(assignment);
+            BitSet usedColumns = usedColumns(assignment);
             for (int column = 0; column < size; column++) {
-                if ((usedColumns & (1 << column)) != 0) continue;
+                if (usedColumns.get(column)) continue;
                 int onlyRow = -1;
                 for (int row = 0; row < size; row++) {
-                    if (assignment[row] < 0 && (masks[row] & (1 << column)) != 0) {
+                    if (assignment[row] < 0 && masks[row].get(column)) {
                         if (onlyRow >= 0) { onlyRow = -2; break; }
                         onlyRow = row;
                     }
@@ -81,17 +81,14 @@ final class PuzzleSolver {
                 if (onlyRow >= 0) { assignment[onlyRow] = column; changed = true; break; }
             }
             if (changed) continue;
-            int usedRegions = usedRegions(assignment);
+            BitSet usedRegions = usedRegions(assignment);
             for (int target = 0; target < size; target++) {
-                if ((usedRegions & (1 << target)) != 0) continue;
+                if (usedRegions.get(target)) continue;
                 int onlyRow = -1, onlyColumn = -1, possibilities = 0;
                 for (int row = 0; row < size && possibilities <= 1; row++) {
                     if (assignment[row] >= 0) continue;
-                    int mask = masks[row];
-                    while (mask != 0) {
-                        int bit = mask & -mask;
-                        mask -= bit;
-                        int column = Integer.numberOfTrailingZeros(bit);
+                    BitSet mask = masks[row];
+                    for (int column = mask.nextSetBit(0); column >= 0; column = mask.nextSetBit(column + 1)) {
                         if (region[row][column] == target) {
                             possibilities++;
                             onlyRow = row;
@@ -111,47 +108,54 @@ final class PuzzleSolver {
         int bestRow = -1, bestCount = Integer.MAX_VALUE;
         for (int row = 0; row < size; row++) {
             if (assignment[row] >= 0) continue;
-            int count = Integer.bitCount(candidates(row, assignment));
+            int count = candidates(row, assignment).cardinality();
             if (count < bestCount) { bestCount = count; bestRow = row; }
         }
         return bestRow;
     }
 
-    private int candidates(int row, int[] assignment) {
-        if (assignment[row] >= 0) return 1 << assignment[row];
-        int usedColumns = usedColumns(assignment), usedRegions = usedRegions(assignment), mask = 0;
+    private BitSet candidates(int row, int[] assignment) {
+        BitSet mask = new BitSet(size);
+        if (assignment[row] >= 0) {
+            mask.set(assignment[row]);
+            return mask;
+        }
+        BitSet usedColumns = usedColumns(assignment);
+        BitSet usedRegions = usedRegions(assignment);
         for (int column = 0; column < size; column++) {
-            if ((usedColumns & (1 << column)) != 0) continue;
-            if ((usedRegions & (1 << region[row][column])) != 0) continue;
+            if (usedColumns.get(column)) continue;
+            if (usedRegions.get(region[row][column])) continue;
             if (row > 0 && assignment[row - 1] >= 0 && Math.abs(column - assignment[row - 1]) == 1) continue;
             if (row + 1 < size && assignment[row + 1] >= 0 && Math.abs(column - assignment[row + 1]) == 1) continue;
-            mask |= 1 << column;
+            mask.set(column);
         }
         return mask;
     }
 
-    private int usedColumns(int[] assignment) {
-        int mask = 0;
-        for (int column : assignment) if (column >= 0) mask |= 1 << column;
-        return mask;
+    private BitSet usedColumns(int[] assignment) {
+        BitSet used = new BitSet(size);
+        for (int column : assignment) if (column >= 0) used.set(column);
+        return used;
     }
 
-    private int usedRegions(int[] assignment) {
-        int mask = 0;
-        for (int row = 0; row < size; row++) if (assignment[row] >= 0) mask |= 1 << region[row][assignment[row]];
-        return mask;
+    private BitSet usedRegions(int[] assignment) {
+        BitSet used = new BitSet(size);
+        for (int row = 0; row < size; row++) if (assignment[row] >= 0) used.set(region[row][assignment[row]]);
+        return used;
     }
 
     private boolean isPartialValid(int[] assignment) {
-        int columns = 0, regions = 0;
+        BitSet columns = new BitSet(size);
+        BitSet regions = new BitSet(size);
         for (int row = 0; row < size; row++) {
             int column = assignment[row];
             if (column < 0) continue;
             if (column >= size) return false;
-            int columnBit = 1 << column, regionBit = 1 << region[row][column];
-            if ((columns & columnBit) != 0 || (regions & regionBit) != 0) return false;
-            columns |= columnBit;
-            regions |= regionBit;
+            int regionId = region[row][column];
+            if (regionId < 0 || regionId >= size) return false;
+            if (columns.get(column) || regions.get(regionId)) return false;
+            columns.set(column);
+            regions.set(regionId);
             if (row > 0 && assignment[row - 1] >= 0 && Math.abs(column - assignment[row - 1]) == 1) return false;
         }
         return true;
@@ -159,6 +163,6 @@ final class PuzzleSolver {
 
     private boolean isCompleteValid(int[] assignment) {
         for (int value : assignment) if (value < 0) return false;
-        return isPartialValid(assignment) && Integer.bitCount(usedColumns(assignment)) == size && Integer.bitCount(usedRegions(assignment)) == size;
+        return isPartialValid(assignment) && usedColumns(assignment).cardinality() == size && usedRegions(assignment).cardinality() == size;
     }
 }

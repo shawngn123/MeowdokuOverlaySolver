@@ -17,11 +17,11 @@ final class PuzzlePipeline {
         void onFinished(String failureReason);
     }
 
-    void run(Bitmap bitmap, Listener listener) {
+    void run(Bitmap bitmap, Integer catTarget, Listener listener) {
         if (listener.isCancelled()) return;
         BoardGeometry board;
         try {
-            board = boardDetector.detect(bitmap);
+            board = boardDetector.detect(bitmap, catTarget);
         } catch (RuntimeException error) {
             Log.e(TAG, "Board detection failed", error);
             listener.onFinished("Board detection failed");
@@ -29,10 +29,11 @@ final class PuzzlePipeline {
         }
         if (board == null) {
             Log.i(TAG, "Puzzle not found");
-            listener.onFinished("Puzzle not found");
+            String target = catTarget == null ? "" : " for cat target " + catTarget;
+            listener.onFinished("Puzzle not found" + target);
             return;
         }
-        String boardError = boardValidationError(board);
+        String boardError = boardValidationError(board, catTarget);
         if (boardError != null) {
             Log.i(TAG, "Board validation failed: " + boardError);
             listener.onFinished("Puzzle board is invalid: " + boardError);
@@ -69,6 +70,7 @@ final class PuzzlePipeline {
             listener.onFinished("Puzzle cell backgrounds could not be read: " + backgroundError);
             return;
         }
+        logDetectionSummary(board, regions, catTarget);
 
         PuzzleModel model;
         try {
@@ -78,7 +80,7 @@ final class PuzzlePipeline {
             listener.onFinished("Puzzle reader failed");
             return;
         }
-        String solveInputError = solveInputValidationError(board, regions, model);
+        String solveInputError = solveInputValidationError(board, regions, model, catTarget);
         if (solveInputError != null) {
             Log.i(TAG, "Solve validation failed: " + solveInputError);
             listener.onFinished("Puzzle is not ready to solve: " + solveInputError);
@@ -120,7 +122,14 @@ final class PuzzlePipeline {
         );
     }
 
-    private String boardValidationError(BoardGeometry board) {
+    private void logDetectionSummary(BoardGeometry board, RegionMap regions, Integer catTarget) {
+        Log.i(TAG, "Detected Board Size: " + board.rows + "\u00d7" + board.columns);
+        Log.i(TAG, "Detected Cells: " + board.cellCount());
+        Log.i(TAG, "Detected Regions: " + regions.regionCount);
+        Log.i(TAG, "Detected Cat Target: " + (catTarget == null ? "unknown" : catTarget));
+    }
+
+    private String boardValidationError(BoardGeometry board, Integer catTarget) {
         if (board == null) {
             return "Board is missing.";
         }
@@ -133,6 +142,13 @@ final class PuzzlePipeline {
         if (board.rows != board.columns) {
             return "Board must be square; rows=" + board.rows + ", columns=" + board.columns + ".";
         }
+        long expectedCells = (long) board.rows * board.rows;
+        if (board.cellCount() != expectedCells) {
+            return "CellCount " + board.cellCount() + " does not equal BoardSize squared " + expectedCells + ".";
+        }
+        if (catTarget != null && board.rows != catTarget) {
+            return "Detected board size " + board.rows + " does not match cat target " + catTarget + ".";
+        }
         if (board.xLines == null || board.xLines.length != board.columns + 1) {
             int found = board.xLines == null ? 0 : board.xLines.length;
             return "Expected " + (board.columns + 1) + " vertical grid lines, found " + found + ".";
@@ -144,8 +160,8 @@ final class PuzzlePipeline {
         return null;
     }
 
-    private String solveInputValidationError(BoardGeometry board, RegionMap regions, PuzzleModel model) {
-        String boardError = boardValidationError(board);
+    private String solveInputValidationError(BoardGeometry board, RegionMap regions, PuzzleModel model, Integer catTarget) {
+        String boardError = boardValidationError(board, catTarget);
         if (boardError != null) {
             return boardError;
         }

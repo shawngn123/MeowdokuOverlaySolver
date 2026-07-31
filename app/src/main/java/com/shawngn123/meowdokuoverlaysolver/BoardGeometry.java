@@ -22,5 +22,6 @@ final class BoardGeometry {
     float centerX(int column) { return (xLines[column] + xLines[column + 1]) * 0.5f; }
     float centerY(int row) { return (yLines[row] + yLines[row + 1]) * 0.5f; }
     RectF cellRect(int row, int column) { return new RectF(xLines[column], yLines[row], xLines[column + 1], yLines[row + 1]); }
+    long cellCount() { return (long) rows * columns; }
     float averageCellSize() { return (bounds.width() / columns + bounds.height() / rows) * 0.5f; }
 }

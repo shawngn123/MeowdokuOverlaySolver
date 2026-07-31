@@ -233,21 +233,23 @@ public class OverlayService extends Service {
     private void captureOnce() {
         if (busy) return;
         int operation = ++operationId;
+        Integer catTarget = SolverAccessibilityService.currentCatTarget();
+        Log.i(TAG, "Cat counter target: " + (catTarget == null ? "unreadable; falling back to grid cell count" : catTarget));
         busy = true;
         removeDebugOverlay();
         removeStatusBubble();
         setControlButtonsVisibility(View.INVISIBLE);
-        main.postDelayed(() -> beginCapture(operation), CAPTURE_BUTTON_HIDE_DELAY_MS);
+        main.postDelayed(() -> beginCapture(operation, catTarget), CAPTURE_BUTTON_HIDE_DELAY_MS);
     }
 
-    private void beginCapture(int operation) {
+    private void beginCapture(int operation, Integer catTarget) {
         if (!isCurrentOperation(operation) || !busy) return;
         if (!hasProjectionPermission()) { fail(operation, "MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
             int[] size = screenSize();
             reader = ImageReader.newInstance(size[0], size[1], PixelFormat.RGBA_8888, CAPTURE_MAX_IMAGES);
-            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation), main);
+            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation, catTarget), main);
             if (projection == null) createProjection(size);
             else {
                 if (virtualDisplay == null) throw new IllegalStateException("Virtual display is unavailable");
@@ -280,7 +282,7 @@ public class OverlayService extends Service {
         if (virtualDisplay == null) throw new IllegalStateException("Could not create virtual display");
     }
 
-    private void imageAvailable(ImageReader source, int operation) {
+    private void imageAvailable(ImageReader source, int operation, Integer catTarget) {
         if (!capturing || source != reader || !isCurrentOperation(operation)) return;
         Image image = null;
         try {
@@ -293,7 +295,7 @@ public class OverlayService extends Service {
             capturing = false;
             restoreControlButtons();
             Log.i(TAG, "Screen captured successfully");
-            process(pipelineBitmap, operation);
+            process(pipelineBitmap, operation, catTarget);
         } catch (Exception error) { fail(operation, error.getMessage(), error); }
         finally {
             if (image != null) image.close();
@@ -327,10 +329,10 @@ public class OverlayService extends Service {
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
-    private void process(Bitmap bitmap, int operation) {
+    private void process(Bitmap bitmap, int operation, Integer catTarget) {
         worker.execute(() -> {
             try {
-                pipeline.run(bitmap, new PuzzlePipeline.Listener() {
+                pipeline.run(bitmap, catTarget, new PuzzlePipeline.Listener() {
                     @Override public boolean isCancelled() { return !isCurrentOperation(operation); }
                     @Override public void onDebug(DebugData data) {
                         if (!isCurrentOperation(operation)) return;
@@ -367,9 +369,7 @@ public class OverlayService extends Service {
 
     private void quitPuzzle() {
         cancelActiveOperation();
-        SolverAccessibilityService.goBack((success, reason) -> main.post(() -> {
-            if (!success) showStatus(reason);
-        }));
+        stopSelf();
     }
 
     private void cancelActiveOperation() {

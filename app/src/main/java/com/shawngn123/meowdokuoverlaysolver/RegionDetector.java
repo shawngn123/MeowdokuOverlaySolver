@@ -55,6 +55,11 @@ final class RegionDetector {
             }
         }
 
+        if (size == 1) {
+            int[][] singleRegion = {{0}};
+            return new Result(new RegionMap(size, singleRegion, size, backgroundColors), null);
+        }
+
         Edge[] edges = new Edge[2 * size * (size - 1)];
         int edgeCount = 0;
         for (int row = 0; row < size; row++) {
@@ -138,8 +143,8 @@ final class RegionDetector {
         if (board.rows != board.columns) {
             return "Board must be square; rows=" + board.rows + ", columns=" + board.columns + ".";
         }
-        if (board.rows < 4 || board.rows > 12) {
-            return "Unsupported board size " + board.rows + ".";
+        if (board.rows <= 0) {
+            return "BoardSize must be greater than 0; found " + board.rows + ".";
         }
         return null;
     }

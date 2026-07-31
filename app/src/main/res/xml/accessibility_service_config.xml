@@ -3,6 +3,7 @@
     android:description="@string/accessibility_service_description"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
     android:notificationTimeout="50"
     android:canPerformGestures="true"
-    android:canRetrieveWindowContent="false" />
+    android:canRetrieveWindowContent="true" />

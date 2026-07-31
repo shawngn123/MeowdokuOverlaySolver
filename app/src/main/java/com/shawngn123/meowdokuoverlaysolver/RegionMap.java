@@ -1,8 +1,6 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
 final class RegionMap {
-    private static final int MIN_SIZE = 4;
-    private static final int MAX_SIZE = 12;
     private static final int[] ROW_OFFSETS = {-1, 1, 0, 0};
     private static final int[] COLUMN_OFFSETS = {0, 0, -1, 1};
 
@@ -35,8 +33,8 @@ final class RegionMap {
         if (size != expectedRows) {
             return "Region map size " + size + " does not match board size " + expectedRows + ".";
         }
-        if (size < MIN_SIZE || size > MAX_SIZE) {
-            return "Unsupported board size " + size + ".";
+        if (size <= 0) {
+            return "BoardSize must be greater than 0; found " + size + ".";
         }
         if (regionCount != expectedRows) {
             return "Expected " + expectedRows + " regions, found " + regionCount + ".";
@@ -69,6 +67,9 @@ final class RegionMap {
         for (int region = 0; region < regionCount; region++) {
             if (counts[region] == 0) {
                 return "Region " + region + " contains 0 cells.";
+            }
+            if (counts[region] != expectedRows) {
+                return "Region " + region + " contains " + counts[region] + " cells; expected " + expectedRows + ".";
             }
         }
         return disconnectedRegionError(counts);
