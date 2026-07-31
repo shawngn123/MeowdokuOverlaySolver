@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Meowdoku Overlay Solver</string>
+    <string name="notification_channel_name">Solver overlay</string>
+    <string name="notification_title">Meowdoku solver ready</string>
+    <string name="notification_text">The SOLVE overlay button is active.</string>
+</resources>
