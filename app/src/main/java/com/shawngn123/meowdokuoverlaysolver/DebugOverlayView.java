@@ -40,7 +40,7 @@ final class DebugOverlayView extends View {
                     hsv[1] = 0.72f;
                     hsv[2] = 1f;
                     paint.setColor(Color.HSVToColor(92, hsv));
-                    canvas.drawRect(board.cellRect(row, column), paint);
+                    drawRect(canvas, board.cellRect(row, column), paint);
                 }
             }
             paint.setTextAlign(Paint.Align.CENTER);
@@ -70,7 +70,7 @@ final class DebugOverlayView extends View {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(5f);
         paint.setColor(Color.argb(235, 0, 255, 80));
-        canvas.drawRect(board.bounds, paint);
+        drawRect(canvas, board.bounds, paint);
         paint.setStrokeWidth(2f);
         paint.setColor(Color.argb(210, 0, 220, 255));
         for (float x : board.xLines) canvas.drawLine(x, board.bounds.top, x, board.bounds.bottom, paint);
@@ -79,5 +79,9 @@ final class DebugOverlayView extends View {
         paint.setColor(Color.argb(240, 255, 40, 40));
         float radius = Math.max(3f, board.averageCellSize() * 0.055f);
         for (int row = 0; row < board.rows; row++) for (int column = 0; column < board.columns; column++) canvas.drawCircle(board.centerX(column), board.centerY(row), radius, paint);
+    }
+
+    private void drawRect(Canvas canvas, FloatRect rect, Paint paint) {
+        canvas.drawRect(rect.left, rect.top, rect.right, rect.bottom, paint);
     }
 }

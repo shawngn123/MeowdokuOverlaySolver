@@ -12,4 +12,14 @@ final class DebugData {
         this.cats = cats;
         this.solutionColumns = solutionColumns;
     }
+
+    static DebugData from(AnalysisResult result) {
+        if (result == null) return new DebugData(null, null, null, null);
+        return new DebugData(
+                result.board,
+                result.regions,
+                result.model == null ? null : result.model.occupied,
+                result.solution == null ? null : result.solution.columns
+        );
+    }
 }

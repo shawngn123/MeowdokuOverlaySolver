@@ -1,25 +1,25 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
-final class PuzzleModel {
-    final int size;
-    final RegionMap regions;
-    final boolean[][] occupied;
-    final boolean[][] locked;
-    final float[][] catConfidence;
+public final class PuzzleModel {
+    public final int size;
+    public final RegionMap regions;
+    public final boolean[][] occupied;
+    public final boolean[][] locked;
+    public final float[][] catConfidence;
 
-    PuzzleModel(int size, RegionMap regions, boolean[][] occupied, boolean[][] locked, float[][] catConfidence) {
+    public PuzzleModel(int size, RegionMap regions, boolean[][] occupied, boolean[][] locked, float[][] catConfidence) {
         this.size = size;
         this.regions = regions;
-        this.occupied = occupied;
-        this.locked = locked;
-        this.catConfidence = catConfidence;
+        this.occupied = copy(occupied);
+        this.locked = copy(locked);
+        this.catConfidence = copy(catConfidence);
     }
 
-    boolean isValid() {
+    public boolean isValid() {
         return validationError() == null;
     }
 
-    String validationError() {
+    public String validationError() {
         if (size <= 0) {
             return "BoardSize must be greater than 0; found " + size + ".";
         }
@@ -48,6 +48,7 @@ final class PuzzleModel {
         if (catConfidence.length != size) {
             return "Expected " + size + " cat confidence rows, found " + catConfidence.length + ".";
         }
+
         boolean[] columns = new boolean[size];
         boolean[] regionUsed = new boolean[size];
         int previousColumn = -99;
@@ -104,9 +105,25 @@ final class PuzzleModel {
         return null;
     }
 
-    int occupiedCount() {
+    public int occupiedCount() {
         int count = 0;
-        for (boolean[] row : occupied) for (boolean value : row) if (value) count++;
+        for (boolean[] row : occupied) {
+            for (boolean value : row) if (value) count++;
+        }
         return count;
+    }
+
+    private static boolean[][] copy(boolean[][] source) {
+        if (source == null) return null;
+        boolean[][] copy = new boolean[source.length][];
+        for (int i = 0; i < source.length; i++) copy[i] = source[i] == null ? null : source[i].clone();
+        return copy;
+    }
+
+    private static float[][] copy(float[][] source) {
+        if (source == null) return null;
+        float[][] copy = new float[source.length][];
+        for (int i = 0; i < source.length; i++) copy[i] = source[i] == null ? null : source[i].clone();
+        return copy;
     }
 }

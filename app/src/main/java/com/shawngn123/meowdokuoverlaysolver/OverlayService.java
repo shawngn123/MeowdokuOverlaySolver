@@ -233,23 +233,21 @@ public class OverlayService extends Service {
     private void captureOnce() {
         if (busy) return;
         int operation = ++operationId;
-        Integer catTarget = SolverAccessibilityService.currentCatTarget();
-        Log.i(TAG, "Cat counter target: " + (catTarget == null ? "unreadable; falling back to grid cell count" : catTarget));
         busy = true;
         removeDebugOverlay();
         removeStatusBubble();
         setControlButtonsVisibility(View.INVISIBLE);
-        main.postDelayed(() -> beginCapture(operation, catTarget), CAPTURE_BUTTON_HIDE_DELAY_MS);
+        main.postDelayed(() -> beginCapture(operation), CAPTURE_BUTTON_HIDE_DELAY_MS);
     }
 
-    private void beginCapture(int operation, Integer catTarget) {
+    private void beginCapture(int operation) {
         if (!isCurrentOperation(operation) || !busy) return;
         if (!hasProjectionPermission()) { fail(operation, "MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
             int[] size = screenSize();
             reader = ImageReader.newInstance(size[0], size[1], PixelFormat.RGBA_8888, CAPTURE_MAX_IMAGES);
-            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation, catTarget), main);
+            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation), main);
             if (projection == null) createProjection(size);
             else {
                 if (virtualDisplay == null) throw new IllegalStateException("Virtual display is unavailable");
@@ -282,7 +280,7 @@ public class OverlayService extends Service {
         if (virtualDisplay == null) throw new IllegalStateException("Could not create virtual display");
     }
 
-    private void imageAvailable(ImageReader source, int operation, Integer catTarget) {
+    private void imageAvailable(ImageReader source, int operation) {
         if (!capturing || source != reader || !isCurrentOperation(operation)) return;
         Image image = null;
         try {
@@ -295,7 +293,7 @@ public class OverlayService extends Service {
             capturing = false;
             restoreControlButtons();
             Log.i(TAG, "Screen captured successfully");
-            process(pipelineBitmap, operation, catTarget);
+            process(pipelineBitmap, operation);
         } catch (Exception error) { fail(operation, error.getMessage(), error); }
         finally {
             if (image != null) image.close();
@@ -329,45 +327,57 @@ public class OverlayService extends Service {
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
-    private void process(Bitmap bitmap, int operation, Integer catTarget) {
+    private void process(Bitmap bitmap, int operation) {
         worker.execute(() -> {
             try {
-                pipeline.run(bitmap, catTarget, new PuzzlePipeline.Listener() {
-                    @Override public boolean isCancelled() { return !isCurrentOperation(operation); }
-                    @Override public void onDebug(DebugData data) {
-                        if (!isCurrentOperation(operation)) return;
-                        if (data.regions != null && data.cats == null && data.solutionColumns == null) {
-                            DebugImageWriter.save(OverlayService.this, bitmap, data, "operation-" + operation + "-regions");
-                        }
-                        main.post(() -> {
-                            if (isCurrentOperation(operation)) showDebug(data);
-                        });
-                    }
-                    @Override public void onBeforeGestures() {
-                        if (!isCurrentOperation(operation)) return;
-                        main.post(() -> {
-                            if (isCurrentOperation(operation) && !DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
-                        });
-                    }
-                    @Override public void onFinished(String reason) {
-                        if (!isCurrentOperation(operation)) return;
-                        main.post(() -> {
-                            if (!isCurrentOperation(operation)) return;
-                            if (!DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
-                            if (reason != null) {
-                                Log.i(TAG, reason);
-                                showStatus(reason);
-                            }
-                            busy = false;
-                        });
-                    }
+                ArgbImage image = toArgbImage(bitmap);
+                AnalysisResult result = pipeline.analyze(image);
+                DebugImageWriter.saveAll(OverlayService.this, bitmap, result, "operation-" + operation);
+                if (!isCurrentOperation(operation)) return;
+                main.post(() -> {
+                    if (isCurrentOperation(operation)) showDebug(DebugData.from(result));
                 });
+                if (!result.isSuccess()) {
+                    finishOperation(operation, result.failureReason);
+                    return;
+                }
+                main.post(() -> {
+                    if (isCurrentOperation(operation) && !DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
+                });
+                if (!isCurrentOperation(operation)) return;
+                SolverAccessibilityService.tapMissing(
+                        result.board,
+                        result.model.occupied,
+                        result.solution.columns,
+                        (success, reason) -> finishOperation(operation, success ? null : reason)
+                );
             } finally {
                 if (bitmap != null && !bitmap.isRecycled()) {
                     bitmap.recycle();
                 }
             }
         });
+    }
+
+    private void finishOperation(int operation, String reason) {
+        if (!isCurrentOperation(operation)) return;
+        main.post(() -> {
+            if (!isCurrentOperation(operation)) return;
+            if (!DebugFlags.SHOW_OVERLAYS) removeDebugOverlay();
+            if (reason != null) {
+                Log.i(TAG, reason);
+                showStatus(reason);
+            }
+            busy = false;
+        });
+    }
+
+    private ArgbImage toArgbImage(Bitmap bitmap) {
+        int width = bitmap.getWidth();
+        int height = bitmap.getHeight();
+        int[] pixels = new int[width * height];
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+        return ArgbImage.wrapCopy(width, height, pixels);
     }
 
     private void quitPuzzle() {

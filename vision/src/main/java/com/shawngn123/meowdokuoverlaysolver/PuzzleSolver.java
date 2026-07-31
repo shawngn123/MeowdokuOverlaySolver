@@ -3,12 +3,19 @@ package com.shawngn123.meowdokuoverlaysolver;
 import java.util.Arrays;
 import java.util.BitSet;
 
-final class PuzzleSolver {
-    static final class Result {
-        final int solutionCount;
-        final int[] columns;
-        Result(int solutionCount, int[] columns) { this.solutionCount = solutionCount; this.columns = columns; }
-        boolean hasUniqueSolution() { return solutionCount == 1 && columns != null; }
+public final class PuzzleSolver {
+    public static final class Result {
+        public final int solutionCount;
+        public final int[] columns;
+
+        Result(int solutionCount, int[] columns) {
+            this.solutionCount = solutionCount;
+            this.columns = columns;
+        }
+
+        public boolean hasUniqueSolution() {
+            return solutionCount == 1 && columns != null;
+        }
     }
 
     private int size;
@@ -16,7 +23,7 @@ final class PuzzleSolver {
     private int[] firstSolution;
     private int solutionCount;
 
-    Result solve(PuzzleModel model) {
+    public Result solve(PuzzleModel model) {
         if (model == null || !model.isValid()) return new Result(0, null);
         size = model.size;
         region = model.regions.cells;
@@ -24,7 +31,11 @@ final class PuzzleSolver {
         solutionCount = 0;
         int[] assignment = new int[size];
         Arrays.fill(assignment, -1);
-        for (int row = 0; row < size; row++) for (int column = 0; column < size; column++) if (model.occupied[row][column]) assignment[row] = column;
+        for (int row = 0; row < size; row++) {
+            for (int column = 0; column < size; column++) {
+                if (model.occupied[row][column]) assignment[row] = column;
+            }
+        }
         if (!isPartialValid(assignment)) return new Result(0, null);
         search(assignment);
         return new Result(solutionCount, firstSolution == null ? null : firstSolution.clone());
@@ -73,12 +84,19 @@ final class PuzzleSolver {
                 int onlyRow = -1;
                 for (int row = 0; row < size; row++) {
                     if (assignment[row] < 0 && masks[row].get(column)) {
-                        if (onlyRow >= 0) { onlyRow = -2; break; }
+                        if (onlyRow >= 0) {
+                            onlyRow = -2;
+                            break;
+                        }
                         onlyRow = row;
                     }
                 }
                 if (onlyRow == -1) return false;
-                if (onlyRow >= 0) { assignment[onlyRow] = column; changed = true; break; }
+                if (onlyRow >= 0) {
+                    assignment[onlyRow] = column;
+                    changed = true;
+                    break;
+                }
             }
             if (changed) continue;
             BitSet usedRegions = usedRegions(assignment);
@@ -98,7 +116,11 @@ final class PuzzleSolver {
                     }
                 }
                 if (possibilities == 0) return false;
-                if (possibilities == 1) { assignment[onlyRow] = onlyColumn; changed = true; break; }
+                if (possibilities == 1) {
+                    assignment[onlyRow] = onlyColumn;
+                    changed = true;
+                    break;
+                }
             }
         } while (changed);
         return isPartialValid(assignment);
@@ -109,7 +131,10 @@ final class PuzzleSolver {
         for (int row = 0; row < size; row++) {
             if (assignment[row] >= 0) continue;
             int count = candidates(row, assignment).cardinality();
-            if (count < bestCount) { bestCount = count; bestRow = row; }
+            if (count < bestCount) {
+                bestCount = count;
+                bestRow = row;
+            }
         }
         return bestRow;
     }
@@ -163,6 +188,8 @@ final class PuzzleSolver {
 
     private boolean isCompleteValid(int[] assignment) {
         for (int value : assignment) if (value < 0) return false;
-        return isPartialValid(assignment) && usedColumns(assignment).cardinality() == size && usedRegions(assignment).cardinality() == size;
+        return isPartialValid(assignment)
+                && usedColumns(assignment).cardinality() == size
+                && usedRegions(assignment).cardinality() == size;
     }
 }

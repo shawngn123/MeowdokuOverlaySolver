@@ -7,13 +7,9 @@ import android.graphics.PointF;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.accessibility.AccessibilityEvent;
-import android.view.accessibility.AccessibilityNodeInfo;
-import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class SolverAccessibilityService extends AccessibilityService {
     interface Completion {
@@ -22,7 +18,6 @@ public class SolverAccessibilityService extends AccessibilityService {
 
     private static final int CELLS_PER_BATCH = 4;
     private static final long CELL_WINDOW_MS = 68;
-    private static final Pattern CAT_COUNTER_PATTERN = Pattern.compile("(?<!\\d)(\\d+)\\s*/\\s*(\\d+)(?!\\d)");
     private static volatile SolverAccessibilityService instance;
     private final Handler main = new Handler(Looper.getMainLooper());
     private int sequenceId;
@@ -62,11 +57,6 @@ public class SolverAccessibilityService extends AccessibilityService {
         }
     }
 
-    static Integer currentCatTarget() {
-        SolverAccessibilityService service = instance;
-        return service == null ? null : service.readCatTarget();
-    }
-
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
         instance = this;
@@ -81,69 +71,6 @@ public class SolverAccessibilityService extends AccessibilityService {
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
 
     @Override public void onInterrupt() { sequenceId++; }
-
-    private Integer readCatTarget() {
-        CounterCandidate best = null;
-        AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
-        if (activeRoot != null) {
-            try {
-                best = bestCandidate(activeRoot, best);
-            } finally {
-                activeRoot.recycle();
-            }
-        }
-
-        List<AccessibilityWindowInfo> windows = getWindows();
-        if (windows != null) {
-            for (AccessibilityWindowInfo window : windows) {
-                AccessibilityNodeInfo root = window.getRoot();
-                if (root == null) continue;
-                try {
-                    best = bestCandidate(root, best);
-                } finally {
-                    root.recycle();
-                }
-            }
-        }
-        return best == null ? null : best.required;
-    }
-
-    private CounterCandidate bestCandidate(AccessibilityNodeInfo node, CounterCandidate best) {
-        if (node == null) return best;
-        best = bestCandidate(node.getText(), best);
-        best = bestCandidate(node.getContentDescription(), best);
-        for (int i = 0; i < node.getChildCount(); i++) {
-            AccessibilityNodeInfo child = node.getChild(i);
-            if (child == null) continue;
-            try {
-                best = bestCandidate(child, best);
-            } finally {
-                child.recycle();
-            }
-        }
-        return best;
-    }
-
-    private CounterCandidate bestCandidate(CharSequence text, CounterCandidate best) {
-        if (text == null) return best;
-        Matcher matcher = CAT_COUNTER_PATTERN.matcher(text);
-        while (matcher.find()) {
-            int current = parseCounterPart(matcher.group(1));
-            int required = parseCounterPart(matcher.group(2));
-            if (required <= 0 || current < 0 || current > required) continue;
-            CounterCandidate candidate = new CounterCandidate(required);
-            if (best == null || candidate.required > best.required) best = candidate;
-        }
-        return best;
-    }
-
-    private int parseCounterPart(String value) {
-        try {
-            return Integer.parseInt(value);
-        } catch (NumberFormatException ignored) {
-            return -1;
-        }
-    }
 
     private void startSequence(List<PointF> points, Completion completion) {
         int id = ++sequenceId;
@@ -191,11 +118,4 @@ public class SolverAccessibilityService extends AccessibilityService {
         }
     }
 
-    private static final class CounterCandidate {
-        final int required;
-
-        CounterCandidate(int required) {
-            this.required = required;
-        }
-    }
 }
