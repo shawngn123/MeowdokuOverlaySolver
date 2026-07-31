@@ -1,20 +1,17 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
 final class RegionMap {
-    private static final int[] ROW_OFFSETS = {-1, 1, 0, 0};
-    private static final int[] COLUMN_OFFSETS = {0, 0, -1, 1};
-
     final int size;
     final int[][] cells;
     final int regionCount;
-    final int[][] backgroundColors;
+    final int[][] sampledColors;
     final int[] regionCellCounts;
 
-    RegionMap(int size, int[][] cells, int regionCount, int[][] backgroundColors) {
+    RegionMap(int size, int[][] cells, int regionCount, int[][] sampledColors) {
         this.size = size;
         this.regionCount = regionCount;
         this.cells = copy(cells);
-        this.backgroundColors = copy(backgroundColors);
+        this.sampledColors = copy(sampledColors);
         this.regionCellCounts = countRegions(this.cells, regionCount);
     }
 
@@ -35,6 +32,11 @@ final class RegionMap {
         }
         if (size <= 0) {
             return "BoardSize must be greater than 0; found " + size + ".";
+        }
+        long totalCells = (long) expectedRows * expectedColumns;
+        long expectedCells = (long) size * size;
+        if (totalCells != expectedCells) {
+            return "Total cells " + totalCells + " does not equal BoardSize squared " + expectedCells + ".";
         }
         if (regionCount != expectedRows) {
             return "Expected " + expectedRows + " regions, found " + regionCount + ".";
@@ -65,96 +67,50 @@ final class RegionMap {
             }
         }
         for (int region = 0; region < regionCount; region++) {
-            if (counts[region] == 0) {
-                return "Region " + region + " contains 0 cells.";
-            }
             if (counts[region] != expectedRows) {
                 return "Region " + region + " contains " + counts[region] + " cells; expected " + expectedRows + ".";
             }
         }
-        return disconnectedRegionError(counts);
+        return null;
+    }
+
+    String regionCountsDiagnostic() {
+        StringBuilder diagnostic = new StringBuilder("Detected region counts:");
+        if (regionCellCounts.length == 0) {
+            diagnostic.append("\nRegion count matrix is empty.");
+            return diagnostic.toString();
+        }
+        for (int region = 0; region < regionCellCounts.length; region++) {
+            diagnostic.append("\nRegion ").append(region).append(": ").append(regionCellCounts[region]).append(" cells");
+        }
+        return diagnostic.toString();
     }
 
     int regionId(int row, int column) {
         return cells[row][column];
     }
 
-    int backgroundColor(int row, int column) {
-        return backgroundColors[row][column];
+    int sampledColor(int row, int column) {
+        return sampledColors[row][column];
     }
 
-    boolean hasBackgroundColors() {
-        return backgroundColorsError(size, size) == null;
+    boolean hasSampledColors() {
+        return sampledColorsError(size, size) == null;
     }
 
-    String backgroundColorsError(int expectedRows, int expectedColumns) {
-        if (backgroundColors == null) {
-            return "Sampled background colors are missing.";
+    String sampledColorsError(int expectedRows, int expectedColumns) {
+        if (sampledColors == null) {
+            return "Sampled cell colors are missing.";
         }
-        if (backgroundColors.length != expectedRows) {
-            return "Expected " + expectedRows + " sampled background rows, found " + backgroundColors.length + ".";
+        if (sampledColors.length != expectedRows) {
+            return "Expected " + expectedRows + " sampled color rows, found " + sampledColors.length + ".";
         }
         for (int row = 0; row < expectedRows; row++) {
-            if (backgroundColors[row] == null) {
-                return "Sampled background row " + row + " is missing.";
+            if (sampledColors[row] == null) {
+                return "Sampled color row " + row + " is missing.";
             }
-            if (backgroundColors[row].length != expectedColumns) {
-                return "Expected " + expectedColumns + " sampled background columns in row " + row + ", found " + backgroundColors[row].length + ".";
-            }
-        }
-        return null;
-    }
-
-    private String disconnectedRegionError(int[] counts) {
-        boolean[][] visited = new boolean[size][size];
-        int[] queueRows = new int[size * size];
-        int[] queueColumns = new int[size * size];
-
-        for (int region = 0; region < regionCount; region++) {
-            int startRow = -1;
-            int startColumn = -1;
-            for (int row = 0; row < size && startRow < 0; row++) {
-                for (int column = 0; column < size; column++) {
-                    if (cells[row][column] == region) {
-                        startRow = row;
-                        startColumn = column;
-                        break;
-                    }
-                }
-            }
-
-            int head = 0;
-            int tail = 0;
-            int visitedCount = 0;
-            visited[startRow][startColumn] = true;
-            queueRows[tail] = startRow;
-            queueColumns[tail] = startColumn;
-            tail++;
-
-            while (head < tail) {
-                int row = queueRows[head];
-                int column = queueColumns[head];
-                head++;
-                visitedCount++;
-
-                for (int i = 0; i < ROW_OFFSETS.length; i++) {
-                    int nextRow = row + ROW_OFFSETS[i];
-                    int nextColumn = column + COLUMN_OFFSETS[i];
-                    if (nextRow < 0 || nextRow >= size || nextColumn < 0 || nextColumn >= size) {
-                        continue;
-                    }
-                    if (visited[nextRow][nextColumn] || cells[nextRow][nextColumn] != region) {
-                        continue;
-                    }
-                    visited[nextRow][nextColumn] = true;
-                    queueRows[tail] = nextRow;
-                    queueColumns[tail] = nextColumn;
-                    tail++;
-                }
-            }
-
-            if (visitedCount != counts[region]) {
-                return "Duplicate RegionID detected: Region " + region + " appears in disconnected groups.";
+            if (sampledColors[row].length != expectedColumns) {
+                return "Expected " + expectedColumns + " sampled color columns in row " + row + ", found " + sampledColors[row].length + ".";
             }
         }
         return null;

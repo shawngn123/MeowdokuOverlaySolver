@@ -336,6 +336,9 @@ public class OverlayService extends Service {
                     @Override public boolean isCancelled() { return !isCurrentOperation(operation); }
                     @Override public void onDebug(DebugData data) {
                         if (!isCurrentOperation(operation)) return;
+                        if (data.regions != null && data.cats == null && data.solutionColumns == null) {
+                            DebugImageWriter.save(OverlayService.this, bitmap, data, "operation-" + operation + "-regions");
+                        }
                         main.post(() -> {
                             if (isCurrentOperation(operation)) showDebug(data);
                         });

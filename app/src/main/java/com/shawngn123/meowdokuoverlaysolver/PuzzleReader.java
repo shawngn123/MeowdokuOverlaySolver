@@ -8,7 +8,7 @@ import java.util.Arrays;
 
 final class PuzzleReader {
     PuzzleModel read(Bitmap bitmap, BoardGeometry board, RegionMap regions) {
-        if (bitmap == null || board == null || regions == null || !regions.isValid() || !regions.hasBackgroundColors()) return null;
+        if (bitmap == null || board == null || regions == null || !regions.isValid() || !regions.hasSampledColors()) return null;
         int n = board.rows;
         float[][] scores = new float[n][n];
         float[][] badges = new float[n][n];
@@ -16,7 +16,7 @@ final class PuzzleReader {
         int index = 0;
         for (int row = 0; row < n; row++) {
             for (int column = 0; column < n; column++) {
-                CellScore score = scoreCell(bitmap, board.cellRect(row, column), regions.backgroundColor(row, column));
+                CellScore score = scoreCell(bitmap, board.cellRect(row, column), regions.sampledColor(row, column));
                 scores[row][column] = score.cat;
                 badges[row][column] = score.badge;
                 flat[index++] = score.cat;

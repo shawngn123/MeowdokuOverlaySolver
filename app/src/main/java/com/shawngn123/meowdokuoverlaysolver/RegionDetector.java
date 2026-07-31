@@ -5,25 +5,18 @@ import android.graphics.Color;
 import android.graphics.RectF;
 import android.util.Log;
 
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.List;
 
 final class RegionDetector {
     private static final String TAG = "MeowdokuSolver";
-    private static final float COLOR_WEIGHT = 0.72f;
-    private static final float BOUNDARY_WEIGHT = 0.28f;
-    private static final int CELL_SAMPLE_STEPS = 13;
-    private static final float CELL_SAMPLE_MIN_FRACTION = 0.14f;
-    private static final float CELL_SAMPLE_MAX_FRACTION = 0.86f;
-    private static final int COLOR_BUCKET_CHANNEL_SHIFT = 4;
-    private static final int COLOR_BUCKET_CHANNELS = 1 << COLOR_BUCKET_CHANNEL_SHIFT;
-    private static final int COLOR_BUCKET_COUNT = COLOR_BUCKET_CHANNELS * COLOR_BUCKET_CHANNELS * COLOR_BUCKET_CHANNELS;
-    private static final int BOUNDARY_SAMPLES = 9;
-    private static final float BOUNDARY_SAMPLE_START = 0.16f;
-    private static final float BOUNDARY_SAMPLE_SPAN = 0.68f;
-    private static final float BOUNDARY_SAMPLE_OFFSET = 0.16f;
+    private static final float REGION_COLOR_DISTANCE_TOLERANCE = 22f;
+    private static final float MIN_COLOR_DISTANCE_TOLERANCE = 6f;
+    private static final float MAX_COLOR_DISTANCE_TOLERANCE = 48f;
+    private static final float COLOR_DISTANCE_TOLERANCE_STEP = 2f;
+    private static final int CENTER_SAMPLE_STEPS = 5;
+    private static final float CENTER_SAMPLE_SPAN = 0.18f;
 
     static final class Result {
         final RegionMap regions;
@@ -42,95 +35,130 @@ final class RegionDetector {
     Result detect(Bitmap bitmap, BoardGeometry board) {
         String inputError = inputValidationError(bitmap, board);
         if (inputError != null) {
-            return failure(inputError);
+            return failure(null, inputError);
         }
 
         int size = board.rows;
-        // Screenshot pixels seed this one-time inference; downstream solving uses only RegionIDs.
-        int[][] backgroundColors = new int[size][size];
-        ColorBuckets buckets = new ColorBuckets();
+        int[][] sampledColors = new int[size][size];
         for (int row = 0; row < size; row++) {
             for (int column = 0; column < size; column++) {
-                backgroundColors[row][column] = sampleCellBackgroundColor(bitmap, board.cellRect(row, column), buckets);
+                sampledColors[row][column] = sampleCellCenterColor(bitmap, board.cellRect(row, column));
             }
         }
 
-        if (size == 1) {
-            int[][] singleRegion = {{0}};
-            return new Result(new RegionMap(size, singleRegion, size, backgroundColors), null);
+        DetectionAttempt best = null;
+        for (float tolerance : candidateTolerances()) {
+            RegionMap regions = buildRegionMap(size, sampledColors, tolerance);
+            String validationError = regions.validationError(board.rows, board.columns);
+            DetectionAttempt attempt = new DetectionAttempt(regions, validationError, tolerance, score(regions, size));
+            if (validationError == null) {
+                Log.i(TAG, "Detected " + regions.regionCount + " regions from center-cell color samples with tolerance " + tolerance + ".");
+                return new Result(regions, null);
+            }
+            if (best == null || attempt.score < best.score) {
+                best = attempt;
+            }
         }
 
-        Edge[] edges = new Edge[2 * size * (size - 1)];
-        int edgeCount = 0;
+        String reason = best == null ? "Could not sample region colors." : best.validationError
+                + "\nColor tolerance used: " + best.tolerance
+                + "\n" + best.regions.regionCountsDiagnostic();
+        return failure(best == null ? null : best.regions, reason);
+    }
+
+    private RegionMap buildRegionMap(int size, int[][] sampledColors, float tolerance) {
+        int[][] regionIds = new int[size][size];
+        List<ColorCluster> clusters = new ArrayList<>(size);
         for (int row = 0; row < size; row++) {
             for (int column = 0; column < size; column++) {
-                int cell = row * size + column;
-                if (column + 1 < size) {
-                    float color = colorDistance(backgroundColors[row][column], backgroundColors[row][column + 1]);
-                    float boundary = boundaryDifference(bitmap, board, row, column, true);
-                    edges[edgeCount++] = new Edge(cell, cell + 1, color * COLOR_WEIGHT + boundary * BOUNDARY_WEIGHT);
+                int color = sampledColors[row][column];
+                int region = nearestCluster(clusters, color, tolerance);
+                if (region < 0) {
+                    region = clusters.size();
+                    clusters.add(new ColorCluster(color));
+                } else {
+                    clusters.get(region).add(color);
                 }
-                if (row + 1 < size) {
-                    float color = colorDistance(backgroundColors[row][column], backgroundColors[row + 1][column]);
-                    float boundary = boundaryDifference(bitmap, board, row, column, false);
-                    edges[edgeCount++] = new Edge(cell, cell + size, color * COLOR_WEIGHT + boundary * BOUNDARY_WEIGHT);
-                }
+                regionIds[row][column] = region;
             }
         }
-        if (edgeCount == 0) {
-            return failure("Expected region adjacency edges, found 0.");
-        }
-        Arrays.sort(edges, 0, edgeCount, Comparator.comparingDouble(edge -> edge.weight));
+        return new RegionMap(size, regionIds, clusters.size(), sampledColors);
+    }
 
-        UnionFind union = new UnionFind(size * size);
-        float lastMergedWeight = 0f;
-        int edgeIndex = 0;
-        while (union.components > size && edgeIndex < edgeCount) {
-            Edge edge = edges[edgeIndex++];
-            if (union.union(edge.a, edge.b)) {
-                lastMergedWeight = edge.weight;
+    private int nearestCluster(List<ColorCluster> clusters, int color, float tolerance) {
+        int best = -1;
+        float bestDistance = tolerance;
+        for (int i = 0; i < clusters.size(); i++) {
+            float distance = colorDistance(color, clusters.get(i).averageColor());
+            if (distance <= bestDistance) {
+                bestDistance = distance;
+                best = i;
             }
         }
-        if (union.components != size) {
-            return failure("Expected " + size + " regions, found " + union.components + ".");
-        }
+        return best;
+    }
 
-        float nextBoundaryWeight = lastMergedWeight;
-        while (edgeIndex < edgeCount) {
-            Edge edge = edges[edgeIndex++];
-            if (union.find(edge.a) != union.find(edge.b)) {
-                nextBoundaryWeight = edge.weight;
+    private float[] candidateTolerances() {
+        int count = 1 + Math.round((MAX_COLOR_DISTANCE_TOLERANCE - MIN_COLOR_DISTANCE_TOLERANCE) / COLOR_DISTANCE_TOLERANCE_STEP);
+        float[] tolerances = new float[count];
+        tolerances[0] = REGION_COLOR_DISTANCE_TOLERANCE;
+        int index = 1;
+        for (float delta = COLOR_DISTANCE_TOLERANCE_STEP; index < count; delta += COLOR_DISTANCE_TOLERANCE_STEP) {
+            float lower = REGION_COLOR_DISTANCE_TOLERANCE - delta;
+            if (lower >= MIN_COLOR_DISTANCE_TOLERANCE) {
+                tolerances[index++] = lower;
+            }
+            float higher = REGION_COLOR_DISTANCE_TOLERANCE + delta;
+            if (higher <= MAX_COLOR_DISTANCE_TOLERANCE && index < count) {
+                tolerances[index++] = higher;
+            }
+            if (lower < MIN_COLOR_DISTANCE_TOLERANCE && higher > MAX_COLOR_DISTANCE_TOLERANCE) {
                 break;
             }
         }
+        return index == tolerances.length ? tolerances : Arrays.copyOf(tolerances, index);
+    }
 
-        Map<Integer, Integer> ids = new HashMap<>(size);
-        int[][] regionIds = new int[size][size];
-        int nextId = 0;
-        for (int row = 0; row < size; row++) {
-            for (int column = 0; column < size; column++) {
-                int root = union.find(row * size + column);
-                Integer id = ids.get(root);
-                if (id == null) {
-                    id = nextId++;
-                    ids.put(root, id);
-                }
-                regionIds[row][column] = id;
+    private int score(RegionMap regions, int expectedSize) {
+        int score = Math.abs(regions.regionCount - expectedSize) * expectedSize * expectedSize;
+        for (int count : regions.regionCellCounts) {
+            score += Math.abs(count - expectedSize);
+        }
+        if (regions.regionCellCounts.length < expectedSize) {
+            score += (expectedSize - regions.regionCellCounts.length) * expectedSize;
+        }
+        return score;
+    }
+
+    private int sampleCellCenterColor(Bitmap bitmap, RectF cell) {
+        int sampleCount = CENTER_SAMPLE_STEPS * CENTER_SAMPLE_STEPS;
+        int[] red = new int[sampleCount];
+        int[] green = new int[sampleCount];
+        int[] blue = new int[sampleCount];
+        int index = 0;
+        float start = 0.5f - CENTER_SAMPLE_SPAN * 0.5f;
+        float step = CENTER_SAMPLE_STEPS == 1 ? 0f : CENTER_SAMPLE_SPAN / (CENTER_SAMPLE_STEPS - 1f);
+        for (int sy = 0; sy < CENTER_SAMPLE_STEPS; sy++) {
+            float fy = start + sy * step;
+            int y = clamp(Math.round(cell.top + cell.height() * fy), 0, bitmap.getHeight() - 1);
+            for (int sx = 0; sx < CENTER_SAMPLE_STEPS; sx++) {
+                float fx = start + sx * step;
+                int x = clamp(Math.round(cell.left + cell.width() * fx), 0, bitmap.getWidth() - 1);
+                int pixel = bitmap.getPixel(x, y);
+                red[index] = Color.red(pixel);
+                green[index] = Color.green(pixel);
+                blue[index] = Color.blue(pixel);
+                index++;
             }
         }
-        if (nextId != size) {
-            return failure("Expected " + size + " regions, found " + nextId + ".");
-        }
+        Arrays.sort(red);
+        Arrays.sort(green);
+        Arrays.sort(blue);
+        return Color.rgb(median(red), median(green), median(blue));
+    }
 
-        RegionMap regions = new RegionMap(size, regionIds, nextId, backgroundColors);
-        String validationError = regions.validationError(board.rows, board.columns);
-        if (validationError != null) {
-            return failure(validationError);
-        }
-
-        Log.d(TAG, "Detected " + nextId + " deterministic RegionIDs; last merged edge="
-                + lastMergedWeight + ", next boundary edge=" + nextBoundaryWeight + ".");
-        return new Result(regions, null);
+    private int median(int[] values) {
+        return values[values.length / 2];
     }
 
     private String inputValidationError(Bitmap bitmap, BoardGeometry board) {
@@ -149,65 +177,9 @@ final class RegionDetector {
         return null;
     }
 
-    private Result failure(String reason) {
+    private Result failure(RegionMap regions, String reason) {
         Log.i(TAG, "Region detection validation failed: " + reason);
-        return new Result(null, reason);
-    }
-
-    private float boundaryDifference(Bitmap bitmap, BoardGeometry board, int row, int column, boolean vertical) {
-        RectF first = board.cellRect(row, column);
-        RectF second = vertical ? board.cellRect(row, column + 1) : board.cellRect(row + 1, column);
-        float total = 0f;
-        for (int i = 0; i < BOUNDARY_SAMPLES; i++) {
-            float t = BOUNDARY_SAMPLE_START + i / (BOUNDARY_SAMPLES - 1f) * BOUNDARY_SAMPLE_SPAN;
-            int x1;
-            int y1;
-            int x2;
-            int y2;
-            if (vertical) {
-                float boundary = first.right;
-                x1 = Math.round(boundary - first.width() * BOUNDARY_SAMPLE_OFFSET);
-                x2 = Math.round(boundary + second.width() * BOUNDARY_SAMPLE_OFFSET);
-                y1 = y2 = Math.round(first.top + first.height() * t);
-            } else {
-                float boundary = first.bottom;
-                y1 = Math.round(boundary - first.height() * BOUNDARY_SAMPLE_OFFSET);
-                y2 = Math.round(boundary + second.height() * BOUNDARY_SAMPLE_OFFSET);
-                x1 = x2 = Math.round(first.left + first.width() * t);
-            }
-            int a = bitmap.getPixel(clamp(x1, 0, bitmap.getWidth() - 1), clamp(y1, 0, bitmap.getHeight() - 1));
-            int b = bitmap.getPixel(clamp(x2, 0, bitmap.getWidth() - 1), clamp(y2, 0, bitmap.getHeight() - 1));
-            total += colorDistance(a, b);
-        }
-        return total / BOUNDARY_SAMPLES;
-    }
-
-    private int sampleCellBackgroundColor(Bitmap bitmap, RectF cell, ColorBuckets buckets) {
-        buckets.clear();
-        int total = 0;
-        for (int sy = 0; sy < CELL_SAMPLE_STEPS; sy++) {
-            float fy = CELL_SAMPLE_MIN_FRACTION
-                    + sy / (CELL_SAMPLE_STEPS - 1f) * (CELL_SAMPLE_MAX_FRACTION - CELL_SAMPLE_MIN_FRACTION);
-            int y = clamp(Math.round(cell.top + cell.height() * fy), 0, bitmap.getHeight() - 1);
-            for (int sx = 0; sx < CELL_SAMPLE_STEPS; sx++) {
-                float fx = CELL_SAMPLE_MIN_FRACTION
-                        + sx / (CELL_SAMPLE_STEPS - 1f) * (CELL_SAMPLE_MAX_FRACTION - CELL_SAMPLE_MIN_FRACTION);
-                int x = clamp(Math.round(cell.left + cell.width() * fx), 0, bitmap.getWidth() - 1);
-                buckets.add(bitmap.getPixel(x, y));
-                total++;
-            }
-        }
-
-        int bestBucket = buckets.bestBucket();
-        if (bestBucket >= 0) {
-            return buckets.averageColor(bestBucket);
-        }
-        int center = bitmap.getPixel(
-                clamp(Math.round(cell.centerX()), 0, bitmap.getWidth() - 1),
-                clamp(Math.round(cell.centerY()), 0, bitmap.getHeight() - 1)
-        );
-        Log.i(TAG, "Cell background sampling fell back to center pixel after " + total + " samples.");
-        return Color.rgb(Color.red(center), Color.green(center), Color.blue(center));
+        return new Result(regions, reason);
     }
 
     private float colorDistance(int first, int second) {
@@ -225,105 +197,40 @@ final class RegionDetector {
         return Math.max(min, Math.min(max, value));
     }
 
-    private static final class ColorBuckets {
-        final int[] counts = new int[COLOR_BUCKET_COUNT];
-        final int[] reds = new int[COLOR_BUCKET_COUNT];
-        final int[] greens = new int[COLOR_BUCKET_COUNT];
-        final int[] blues = new int[COLOR_BUCKET_COUNT];
+    private static final class ColorCluster {
+        private int count;
+        private int red;
+        private int green;
+        private int blue;
 
-        void clear() {
-            Arrays.fill(counts, 0);
-            Arrays.fill(reds, 0);
-            Arrays.fill(greens, 0);
-            Arrays.fill(blues, 0);
+        ColorCluster(int color) {
+            add(color);
         }
 
         void add(int color) {
-            int red = Color.red(color);
-            int green = Color.green(color);
-            int blue = Color.blue(color);
-            int bucket = ((red >> COLOR_BUCKET_CHANNEL_SHIFT) << 8)
-                    | ((green >> COLOR_BUCKET_CHANNEL_SHIFT) << 4)
-                    | (blue >> COLOR_BUCKET_CHANNEL_SHIFT);
-            counts[bucket]++;
-            reds[bucket] += red;
-            greens[bucket] += green;
-            blues[bucket] += blue;
+            count++;
+            red += Color.red(color);
+            green += Color.green(color);
+            blue += Color.blue(color);
         }
 
-        int bestBucket() {
-            int bestBucket = -1;
-            int bestCount = 0;
-            for (int i = 0; i < counts.length; i++) {
-                if (counts[i] > bestCount) {
-                    bestCount = counts[i];
-                    bestBucket = i;
-                }
-            }
-            return bestBucket;
-        }
-
-        int averageColor(int bucket) {
-            int count = Math.max(1, counts[bucket]);
-            return Color.rgb(reds[bucket] / count, greens[bucket] / count, blues[bucket] / count);
+        int averageColor() {
+            int divisor = Math.max(1, count);
+            return Color.rgb(red / divisor, green / divisor, blue / divisor);
         }
     }
 
-    private static final class Edge {
-        final int a;
-        final int b;
-        final float weight;
+    private static final class DetectionAttempt {
+        final RegionMap regions;
+        final String validationError;
+        final float tolerance;
+        final int score;
 
-        Edge(int a, int b, float weight) {
-            this.a = a;
-            this.b = b;
-            this.weight = weight;
-        }
-    }
-
-    private static final class UnionFind {
-        final int[] parent;
-        final byte[] rank;
-        int components;
-
-        UnionFind(int count) {
-            parent = new int[count];
-            rank = new byte[count];
-            components = count;
-            for (int i = 0; i < count; i++) {
-                parent[i] = i;
-            }
-        }
-
-        int find(int value) {
-            int root = value;
-            while (parent[root] != root) {
-                root = parent[root];
-            }
-            while (parent[value] != value) {
-                int next = parent[value];
-                parent[value] = root;
-                value = next;
-            }
-            return root;
-        }
-
-        boolean union(int a, int b) {
-            int firstRoot = find(a);
-            int secondRoot = find(b);
-            if (firstRoot == secondRoot) {
-                return false;
-            }
-            if (rank[firstRoot] < rank[secondRoot]) {
-                parent[firstRoot] = secondRoot;
-            } else if (rank[firstRoot] > rank[secondRoot]) {
-                parent[secondRoot] = firstRoot;
-            } else {
-                parent[secondRoot] = firstRoot;
-                rank[firstRoot]++;
-            }
-            components--;
-            return true;
+        DetectionAttempt(RegionMap regions, String validationError, float tolerance, int score) {
+            this.regions = regions;
+            this.validationError = validationError;
+            this.tolerance = tolerance;
+            this.score = score;
         }
     }
 }

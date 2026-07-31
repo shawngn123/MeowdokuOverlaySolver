@@ -50,24 +50,27 @@ final class PuzzlePipeline {
             listener.onFinished("Puzzle regions could not be read.");
             return;
         }
+        if (detectedRegions.regions != null) {
+            listener.onDebug(new DebugData(board, detectedRegions.regions, null, null));
+        }
         if (!detectedRegions.isSuccess()) {
             listener.onFinished("Puzzle regions could not be read: " + detectedRegions.failureReason);
             return;
         }
         RegionMap regions = detectedRegions.regions;
         if (listener.isCancelled()) return;
-        listener.onDebug(new DebugData(board, regions, null, null));
 
         String regionError = regions.validationError(board.rows, board.columns);
         if (regionError != null) {
-            Log.i(TAG, "Region validation failed: " + regionError);
-            listener.onFinished("Puzzle regions are invalid: " + regionError);
+            String diagnostic = regionError + "\n" + regions.regionCountsDiagnostic();
+            Log.i(TAG, "Region validation failed: " + diagnostic);
+            listener.onFinished("Puzzle regions are invalid: " + diagnostic);
             return;
         }
-        String backgroundError = regions.backgroundColorsError(board.rows, board.columns);
-        if (backgroundError != null) {
-            Log.i(TAG, "Cell background validation failed: " + backgroundError);
-            listener.onFinished("Puzzle cell backgrounds could not be read: " + backgroundError);
+        String sampledColorError = regions.sampledColorsError(board.rows, board.columns);
+        if (sampledColorError != null) {
+            Log.i(TAG, "Sampled cell color validation failed: " + sampledColorError);
+            listener.onFinished("Puzzle cell colors could not be read: " + sampledColorError);
             return;
         }
         logDetectionSummary(board, regions, catTarget);
