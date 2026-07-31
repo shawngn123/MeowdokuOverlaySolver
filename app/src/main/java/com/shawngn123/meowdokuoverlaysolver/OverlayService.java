@@ -41,6 +41,7 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import java.nio.ByteBuffer;
@@ -63,6 +64,10 @@ public class OverlayService extends Service {
     private static final int BUTTON_ELEVATION_DP = 8;
     private static final int BUTTON_MIN_WIDTH_DP = 96;
     private static final int BUTTON_MIN_HEIGHT_DP = 48;
+    private static final int BOARD_SIZE_BUTTON_ROW_WIDTH_DP = 120;
+    private static final int BOARD_SIZE_BUTTON_TEXT_SIZE_SP = 13;
+    private static final int BOARD_SIZE_BUTTON_MIN_HEIGHT_DP = 40;
+    private static final int BOARD_SIZE_BUTTON_SPACING_DP = 2;
     private static final int DEFAULT_RIGHT_MARGIN_DP = 16;
     private static final int DEFAULT_SOLVE_TOP_DP = 180;
     private static final int DEFAULT_BUTTON_SPACING_DP = 8;
@@ -85,7 +90,7 @@ public class OverlayService extends Service {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final PuzzlePipeline pipeline = new PuzzlePipeline();
     private WindowManager windows;
-    private Button solveButton;
+    private LinearLayout solveButtonRow;
     private Button quitButton;
     private DebugOverlayView debugOverlay;
     private TextView statusBubble;
@@ -137,7 +142,7 @@ public class OverlayService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (Settings.canDrawOverlays(this)) {
-            if (solveButton == null || quitButton == null) showControlButtons();
+            if (solveButtonRow == null || quitButton == null) showControlButtons();
             else main.post(this::restoreAllButtonPositions);
         }
         return START_NOT_STICKY;
@@ -158,9 +163,9 @@ public class OverlayService extends Service {
         removeDebugOverlay();
         removeStatusBubble();
         worker.shutdownNow();
-        removeOverlayButton(solveButton);
+        removeOverlayButton(solveButtonRow);
         removeOverlayButton(quitButton);
-        solveButton = null;
+        solveButtonRow = null;
         quitButton = null;
         if (virtualDisplay != null) virtualDisplay.release();
         virtualDisplay = null;
@@ -180,11 +185,52 @@ public class OverlayService extends Service {
             quitButton = createOverlayButton("QUIT", v -> quitPuzzle(), QUIT_BUTTON_ID);
             addOverlayButton(quitButton);
         }
-        if (solveButton == null) {
-            solveButton = createOverlayButton("SOLVE", v -> captureOnce(), SOLVE_BUTTON_ID);
-            addOverlayButton(solveButton);
+        if (solveButtonRow == null) {
+            solveButtonRow = createBoardSizeButtonRow();
+            addOverlayButton(solveButtonRow, dp(BOARD_SIZE_BUTTON_ROW_WIDTH_DP), WindowManager.LayoutParams.WRAP_CONTENT);
         }
         main.post(this::restoreAllButtonPositions);
+    }
+
+    private LinearLayout createBoardSizeButtonRow() {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        row.setBaselineAligned(false);
+        row.setMinimumHeight(dp(BOARD_SIZE_BUTTON_MIN_HEIGHT_DP));
+        row.setOnTouchListener(new DraggableButtonTouchListener(SOLVE_BUTTON_ID, row));
+
+        int[] sizes = {8, 9, 10, 11, 12};
+        for (int i = 0; i < sizes.length; i++) {
+            Button button = createBoardSizeButton(sizes[i], row);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(BOARD_SIZE_BUTTON_MIN_HEIGHT_DP), 1f);
+            if (i < sizes.length - 1) {
+                params.rightMargin = dp(BOARD_SIZE_BUTTON_SPACING_DP);
+            }
+            row.addView(button, params);
+        }
+        return row;
+    }
+
+    private Button createBoardSizeButton(int boardSize, View dragView) {
+        Button button = new Button(this);
+        button.setText(Integer.toString(boardSize));
+        button.setTextColor(Color.WHITE);
+        button.setTextSize(BOARD_SIZE_BUTTON_TEXT_SIZE_SP);
+        button.setAllCaps(false);
+        button.setGravity(Gravity.CENTER);
+        button.setSingleLine(true);
+        button.setIncludeFontPadding(false);
+        button.setMinWidth(0);
+        button.setMinimumWidth(0);
+        button.setMinHeight(dp(BOARD_SIZE_BUTTON_MIN_HEIGHT_DP));
+        button.setMinimumHeight(0);
+        button.setPadding(0, 0, 0, 0);
+        button.setBackground(createButtonBackground());
+        button.setElevation(dp(BUTTON_ELEVATION_DP));
+        button.setOnClickListener(v -> captureOnce(boardSize));
+        button.setOnTouchListener(new DraggableButtonTouchListener(SOLVE_BUTTON_ID, dragView));
+        return button;
     }
 
     private Button createOverlayButton(String text, View.OnClickListener clickListener, String buttonId) {
@@ -211,10 +257,14 @@ public class OverlayService extends Service {
         return background;
     }
 
-    private void addOverlayButton(Button button) {
+    private void addOverlayButton(View button) {
+        addOverlayButton(button, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT);
+    }
+
+    private void addOverlayButton(View button, int width, int height) {
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
+                width,
+                height,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
@@ -225,29 +275,30 @@ public class OverlayService extends Service {
         windows.addView(button, params);
     }
 
-    private void removeOverlayButton(Button button) {
+    private void removeOverlayButton(View button) {
         if (button == null) return;
         try { windows.removeView(button); } catch (RuntimeException ignored) { }
     }
 
-    private void captureOnce() {
+    private void captureOnce(int forcedBoardSize) {
         if (busy) return;
+        Log.i(TAG, "Forced board size: " + forcedBoardSize);
         int operation = ++operationId;
         busy = true;
         removeDebugOverlay();
         removeStatusBubble();
         setControlButtonsVisibility(View.INVISIBLE);
-        main.postDelayed(() -> beginCapture(operation), CAPTURE_BUTTON_HIDE_DELAY_MS);
+        main.postDelayed(() -> beginCapture(operation, forcedBoardSize), CAPTURE_BUTTON_HIDE_DELAY_MS);
     }
 
-    private void beginCapture(int operation) {
+    private void beginCapture(int operation, int forcedBoardSize) {
         if (!isCurrentOperation(operation) || !busy) return;
         if (!hasProjectionPermission()) { fail(operation, "MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
             int[] size = screenSize();
             reader = ImageReader.newInstance(size[0], size[1], PixelFormat.RGBA_8888, CAPTURE_MAX_IMAGES);
-            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation), main);
+            reader.setOnImageAvailableListener(source -> imageAvailable(source, operation, forcedBoardSize), main);
             if (projection == null) createProjection(size);
             else {
                 if (virtualDisplay == null) throw new IllegalStateException("Virtual display is unavailable");
@@ -280,7 +331,7 @@ public class OverlayService extends Service {
         if (virtualDisplay == null) throw new IllegalStateException("Could not create virtual display");
     }
 
-    private void imageAvailable(ImageReader source, int operation) {
+    private void imageAvailable(ImageReader source, int operation, int forcedBoardSize) {
         if (!capturing || source != reader || !isCurrentOperation(operation)) return;
         Image image = null;
         try {
@@ -293,7 +344,7 @@ public class OverlayService extends Service {
             capturing = false;
             restoreControlButtons();
             Log.i(TAG, "Screen captured successfully");
-            process(pipelineBitmap, operation);
+            process(pipelineBitmap, operation, forcedBoardSize);
         } catch (Exception error) { fail(operation, error.getMessage(), error); }
         finally {
             if (image != null) image.close();
@@ -327,12 +378,14 @@ public class OverlayService extends Service {
         return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
     }
 
-    private void process(Bitmap bitmap, int operation) {
+    private void process(Bitmap bitmap, int operation, int forcedBoardSize) {
         worker.execute(() -> {
             try {
                 ArgbImage image = toArgbImage(bitmap);
-                AnalysisResult result = pipeline.analyze(image);
-                Log.i(TAG, result.hudDebugSummary());
+                AnalysisResult result = pipeline.analyze(image, forcedBoardSize);
+                if (result.hudDetection != null) {
+                    Log.i(TAG, result.hudDebugSummary());
+                }
                 DebugImageWriter.saveAll(OverlayService.this, bitmap, result, "operation-" + operation);
                 if (!isCurrentOperation(operation)) return;
                 main.post(() -> {
@@ -483,7 +536,7 @@ public class OverlayService extends Service {
     }
 
     private void setControlButtonsVisibility(int visibility) {
-        if (solveButton != null) solveButton.setVisibility(visibility);
+        if (solveButtonRow != null) solveButtonRow.setVisibility(visibility);
         if (quitButton != null) quitButton.setVisibility(visibility);
     }
 
@@ -511,10 +564,10 @@ public class OverlayService extends Service {
 
     private void restoreAllButtonPositions() {
         restoreButtonPosition(quitButton, QUIT_BUTTON_ID);
-        restoreButtonPosition(solveButton, SOLVE_BUTTON_ID);
+        restoreButtonPosition(solveButtonRow, SOLVE_BUTTON_ID);
     }
 
-    private void restoreButtonPosition(Button button, String buttonId) {
+    private void restoreButtonPosition(View button, String buttonId) {
         if (button == null || button.getParent() == null) return;
         if (button.getWidth() <= 0 || button.getHeight() <= 0) {
             button.post(() -> restoreButtonPosition(button, buttonId));
@@ -540,7 +593,7 @@ public class OverlayService extends Service {
         updateButtonLayout(button, params);
     }
 
-    private void saveButtonPosition(Button button, String buttonId) {
+    private void saveButtonPosition(View button, String buttonId) {
         WindowManager.LayoutParams params = overlayParams(button);
         if (params == null) return;
         Rect safe = safeScreenBounds(button);
@@ -674,6 +727,7 @@ public class OverlayService extends Service {
 
     private final class DraggableButtonTouchListener implements View.OnTouchListener {
         private final String buttonId;
+        private final View dragView;
         private final int touchSlop;
         private Runnable holdRunnable;
         private boolean dragging;
@@ -684,7 +738,12 @@ public class OverlayService extends Service {
         private int startY;
 
         DraggableButtonTouchListener(String buttonId) {
+            this(buttonId, null);
+        }
+
+        DraggableButtonTouchListener(String buttonId, View dragView) {
             this.buttonId = buttonId;
+            this.dragView = dragView;
             touchSlop = ViewConfiguration.get(OverlayService.this).getScaledTouchSlop();
         }
 
@@ -692,7 +751,8 @@ public class OverlayService extends Service {
             if (!OverlayPreferences.allowButtonRepositioning(OverlayService.this)) {
                 return false;
             }
-            WindowManager.LayoutParams params = overlayParams(view);
+            View control = draggableControl(view);
+            WindowManager.LayoutParams params = overlayParams(control);
             if (params == null) {
                 return false;
             }
@@ -701,17 +761,21 @@ public class OverlayService extends Service {
                     beginTracking(view, event, params);
                     return true;
                 case MotionEvent.ACTION_MOVE:
-                    updateTracking(view, event, params);
+                    updateTracking(view, control, event, params);
                     return true;
                 case MotionEvent.ACTION_UP:
-                    finishTracking(view);
+                    finishTracking(view, control);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
-                    cancelTracking(view);
+                    cancelTracking(view, control);
                     return true;
                 default:
                     return true;
             }
+        }
+
+        private View draggableControl(View touchedView) {
+            return dragView == null ? touchedView : dragView;
         }
 
         private void beginTracking(View view, MotionEvent event, WindowManager.LayoutParams params) {
@@ -732,30 +796,28 @@ public class OverlayService extends Service {
             main.postDelayed(holdRunnable, DRAG_HOLD_MS);
         }
 
-        private void updateTracking(View view, MotionEvent event, WindowManager.LayoutParams params) {
+        private void updateTracking(View touchedView, View control, MotionEvent event, WindowManager.LayoutParams params) {
             float deltaX = event.getRawX() - downRawX;
             float deltaY = event.getRawY() - downRawY;
             if (dragging) {
                 params.x = startX + Math.round(deltaX);
                 params.y = startY + Math.round(deltaY);
-                clampButtonParams(params, view, safeScreenBounds(view));
-                updateButtonLayout(view, params);
+                clampButtonParams(params, control, safeScreenBounds(control));
+                updateButtonLayout(control, params);
                 return;
             }
             if (Math.hypot(deltaX, deltaY) > touchSlop) {
                 tapCancelled = true;
-                view.setPressed(false);
+                touchedView.setPressed(false);
                 cancelHold();
             }
         }
 
-        private void finishTracking(View view) {
+        private void finishTracking(View view, View control) {
             cancelHold();
             view.setPressed(false);
             if (dragging) {
-                if (view instanceof Button) {
-                    saveButtonPosition((Button) view, buttonId);
-                }
+                saveButtonPosition(control, buttonId);
                 dragging = false;
                 return;
             }
@@ -764,11 +826,11 @@ public class OverlayService extends Service {
             }
         }
 
-        private void cancelTracking(View view) {
+        private void cancelTracking(View view, View control) {
             cancelHold();
             view.setPressed(false);
-            if (dragging && view instanceof Button) {
-                saveButtonPosition((Button) view, buttonId);
+            if (dragging) {
+                saveButtonPosition(control, buttonId);
             }
             dragging = false;
             tapCancelled = true;

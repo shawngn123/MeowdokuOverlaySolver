@@ -20,7 +20,21 @@ public final class PuzzlePipeline {
             return result(image.width, image.height, hudDetection, null, null, null, null, null, "Unable to determine board size.");
         }
 
-        BoardGeometry board = boardDetector.detect(image, hudDetection.detectedValue);
+        return analyze(image, hudDetection, hudDetection.detectedValue);
+    }
+
+    public AnalysisResult analyze(ArgbImage image, int boardSize) {
+        if (image == null) {
+            return result(0, 0, null, null, null, null, null, null, "Screenshot is unavailable.");
+        }
+        if (!HudBoardSizeDetector.isSupportedBoardSize(boardSize)) {
+            return result(image.width, image.height, null, null, null, null, null, null, "Unsupported forced board size " + boardSize + ".");
+        }
+        return analyze(image, null, boardSize);
+    }
+
+    private AnalysisResult analyze(ArgbImage image, HudBoardSizeDetector.Result hudDetection, int boardSize) {
+        BoardGeometry board = boardDetector.detect(image, boardSize);
         if (board == null) {
             return result(image.width, image.height, hudDetection, null, null, null, null, null, "Puzzle board was not found.");
         }
