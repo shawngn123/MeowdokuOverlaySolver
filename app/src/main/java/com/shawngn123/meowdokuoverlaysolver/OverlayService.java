@@ -28,6 +28,7 @@ import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.View;
 import android.view.WindowManager;
 import android.view.WindowMetrics;
 import android.widget.Button;
@@ -155,6 +156,12 @@ public class OverlayService extends Service {
         busy = true;
         removeDebugOverlay();
         removeStatusBubble();
+        if (solveButton != null) solveButton.setVisibility(View.INVISIBLE);
+        main.postDelayed(this::beginCapture, 90);
+    }
+
+    private void beginCapture() {
+        if (!busy) return;
         if (!hasProjectionPermission()) { fail("MediaProjection permission is not available", null); return; }
         capturing = true;
         try {
@@ -205,6 +212,7 @@ public class OverlayService extends Service {
             if (screenshot != null) screenshot.recycle();
             screenshot = next;
             capturing = false;
+            restoreSolveButton();
             Log.i(TAG, "Screen captured successfully");
             process(next);
         } catch (Exception error) { fail(error.getMessage(), error); }
@@ -307,6 +315,7 @@ public class OverlayService extends Service {
         closeReader();
         removeDebugOverlay();
         showStatus(message);
+        restoreSolveButton();
         capturing = false;
         busy = false;
     }
@@ -318,6 +327,11 @@ public class OverlayService extends Service {
         virtualDisplay = null;
         projection = null;
         clearPermission();
+        restoreSolveButton();
+    }
+
+    private void restoreSolveButton() {
+        if (solveButton != null) solveButton.setVisibility(View.VISIBLE);
     }
 
     private void detachSurface() {

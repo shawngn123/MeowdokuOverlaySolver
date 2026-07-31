@@ -23,11 +23,20 @@ final class PuzzleReader {
             }
         }
 
+        float[] sorted = flat.clone();
+        Arrays.sort(sorted);
+        float median = sorted[sorted.length / 2];
+        float[] deviations = new float[sorted.length];
+        for (int i = 0; i < sorted.length; i++) deviations[i] = Math.abs(sorted[i] - median);
+        Arrays.sort(deviations);
+        float mad = deviations[deviations.length / 2];
+
         float[] means = clusterMeans(flat);
         float low = Math.min(means[0], means[1]);
         float high = Math.max(means[0], means[1]);
-        float threshold = (low + high) * 0.5f;
-        boolean separated = high >= 0.070f && high - low >= 0.030f;
+        float threshold = Math.max((low + high) * 0.5f, median + Math.max(0.018f, mad * 2.35f));
+        boolean separated = high >= 0.065f && high - low >= Math.max(0.026f, mad * 1.8f);
+
         boolean[][] occupied = new boolean[n][n];
         boolean[][] locked = new boolean[n][n];
         int occupiedCount = 0;
@@ -48,8 +57,15 @@ final class PuzzleReader {
 
     private CellScore scoreCell(Bitmap bitmap, RectF cell, int background) {
         int steps = 22;
-        int foreground = 0, dark = 0, edges = 0, badge = 0, badgeTotal = 0, total = 0;
+        int foreground = 0;
+        int dark = 0;
+        int edges = 0;
+        int badge = 0;
+        int badgeTotal = 0;
+        int total = 0;
         float bgLum = luminance(background);
+        int offsetX = Math.max(1, Math.round(cell.width() / 44f));
+        int offsetY = Math.max(1, Math.round(cell.height() / 44f));
         for (int sy = 0; sy < steps; sy++) {
             float fy = 0.16f + sy / (steps - 1f) * 0.68f;
             int y = clamp(Math.round(cell.top + cell.height() * fy), 0, bitmap.getHeight() - 1);
@@ -61,8 +77,8 @@ final class PuzzleReader {
                 float lum = luminance(pixel);
                 if (difference > 27f) foreground++;
                 if (difference > 18f && lum < bgLum - 0.075f) dark++;
-                int nx = clamp(x + Math.max(1, Math.round(cell.width() / 44f)), 0, bitmap.getWidth() - 1);
-                int ny = clamp(y + Math.max(1, Math.round(cell.height() / 44f)), 0, bitmap.getHeight() - 1);
+                int nx = clamp(x + offsetX, 0, bitmap.getWidth() - 1);
+                int ny = clamp(y + offsetY, 0, bitmap.getHeight() - 1);
                 if (colorDistance(pixel, bitmap.getPixel(nx, y)) > 25f || colorDistance(pixel, bitmap.getPixel(x, ny)) > 25f) edges++;
                 if (fx > 0.58f && fy < 0.44f) {
                     badgeTotal++;
@@ -83,7 +99,7 @@ final class PuzzleReader {
         Arrays.sort(sorted);
         float a = sorted[Math.max(0, sorted.length / 5)];
         float b = sorted[Math.min(sorted.length - 1, sorted.length * 4 / 5)];
-        for (int iteration = 0; iteration < 10; iteration++) {
+        for (int iteration = 0; iteration < 12; iteration++) {
             float sumA = 0f, sumB = 0f;
             int countA = 0, countB = 0;
             for (float value : values) {

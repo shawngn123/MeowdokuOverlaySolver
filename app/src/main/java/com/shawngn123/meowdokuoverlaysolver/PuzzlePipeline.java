@@ -39,7 +39,7 @@ final class PuzzlePipeline {
             listener.onFinished("Region detection failed");
             return;
         }
-        if (regions == null || !regions.isValid()) {
+        if (regions == null || !regions.isValid() || regions.confidence < 0.010f) {
             listener.onFinished("Region detection failed");
             return;
         }
