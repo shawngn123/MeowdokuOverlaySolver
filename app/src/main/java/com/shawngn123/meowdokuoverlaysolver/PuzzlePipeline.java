@@ -7,6 +7,7 @@ final class PuzzlePipeline {
     private static final String TAG = "MeowdokuSolver";
     private final BoardDetector boardDetector = new BoardDetector();
     private final RegionDetector regionDetector = new RegionDetector();
+    private final PuzzleReader puzzleReader = new PuzzleReader();
 
     interface Listener {
         void onDebug(DebugData data);
@@ -41,7 +42,20 @@ final class PuzzlePipeline {
             return;
         }
 
-        listener.onDebug(new DebugData(board, regions, null, null));
+        PuzzleModel model;
+        try {
+            model = puzzleReader.read(bitmap, board, regions);
+        } catch (RuntimeException error) {
+            Log.e(TAG, "Puzzle reader failed", error);
+            listener.onFinished("Puzzle reader failed");
+            return;
+        }
+        if (model == null || !model.isValid()) {
+            listener.onFinished("Puzzle state invalid");
+            return;
+        }
+
+        listener.onDebug(new DebugData(board, regions, model.occupied, null));
         listener.onFinished(null);
     }
 }

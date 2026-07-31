@@ -10,6 +10,7 @@ final class DebugOverlayView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private BoardGeometry board;
     private RegionMap regions;
+    private boolean[][] cats;
 
     DebugOverlayView(Context context) {
         super(context);
@@ -19,6 +20,7 @@ final class DebugOverlayView extends View {
     void show(DebugData data) {
         this.board = data.board;
         this.regions = data.regions;
+        this.cats = data.cats;
         invalidate();
     }
 
@@ -37,6 +39,16 @@ final class DebugOverlayView extends View {
                     hsv[2] = 1f;
                     paint.setColor(Color.HSVToColor(92, hsv));
                     canvas.drawRect(board.cellRect(row, column), paint);
+                }
+            }
+        }
+        if (cats != null) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(235, 255, 235, 40));
+            float catRadius = Math.max(6f, board.averageCellSize() * 0.20f);
+            for (int row = 0; row < board.rows; row++) {
+                for (int column = 0; column < board.columns; column++) {
+                    if (cats[row][column]) canvas.drawCircle(board.centerX(column), board.centerY(row), catRadius, paint);
                 }
             }
         }
