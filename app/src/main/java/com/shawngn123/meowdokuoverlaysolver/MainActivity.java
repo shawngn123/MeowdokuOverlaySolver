@@ -1,10 +1,11 @@
 package com.shawngn123.meowdokuoverlaysolver;
 
-import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.media.projection.MediaProjectionConfig;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,7 +17,8 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public class MainActivity extends Activity {
-    private static final int NOTIFICATION_PERMISSION_REQUEST = 1001;
+    private static final int SCREEN_CAPTURE_REQUEST = 1001;
+    private static boolean projectionPermissionPromptedThisSession;
 
     private TextView statusText;
     private Button permissionButton;
@@ -25,6 +27,12 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(createContentView());
+
+        if (!projectionPermissionPromptedThisSession
+                && !OverlayService.hasProjectionPermission()) {
+            projectionPermissionPromptedThisSession = true;
+            requestScreenCapturePermission();
+        }
     }
 
     @Override
@@ -34,15 +42,18 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    public void onRequestPermissionsResult(
-            int requestCode,
-            String[] permissions,
-            int[] grantResults
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == NOTIFICATION_PERMISSION_REQUEST) {
-            updatePermissionState();
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode != SCREEN_CAPTURE_REQUEST) {
+            return;
         }
+
+        if (resultCode == RESULT_OK && data != null) {
+            OverlayService.setProjectionPermission(resultCode, data);
+        }
+
+        updatePermissionState();
     }
 
     private LinearLayout createContentView() {
@@ -101,18 +112,15 @@ public class MainActivity extends Activity {
     }
 
     private void updatePermissionState() {
-        boolean overlayGranted = Settings.canDrawOverlays(this);
-        boolean notificationsGranted = notificationsGranted();
-
-        if (!notificationsGranted) {
-            statusText.setText("Notification permission is required for the overlay service.");
-            permissionButton.setText("Grant notification permission");
+        if (!OverlayService.hasProjectionPermission()) {
+            statusText.setText("Screen capture permission is required.");
+            permissionButton.setText("Grant screen capture permission");
             permissionButton.setEnabled(true);
-            permissionButton.setOnClickListener(v -> requestNotificationPermission());
+            permissionButton.setOnClickListener(v -> requestScreenCapturePermission());
             return;
         }
 
-        if (!overlayGranted) {
+        if (!Settings.canDrawOverlays(this)) {
             statusText.setText("Display-over-other-apps permission is required.");
             permissionButton.setText("Grant overlay permission");
             permissionButton.setEnabled(true);
@@ -127,21 +135,20 @@ public class MainActivity extends Activity {
         startOverlayService();
     }
 
-    private boolean notificationsGranted() {
-        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
-                || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
-                == PackageManager.PERMISSION_GRANTED;
-    }
+    private void requestScreenCapturePermission() {
+        MediaProjectionManager manager = (MediaProjectionManager)
+                getSystemService(Context.MEDIA_PROJECTION_SERVICE);
 
-    private void requestNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            requestPermissions(
-                    new String[]{Manifest.permission.POST_NOTIFICATIONS},
-                    NOTIFICATION_PERMISSION_REQUEST
+        Intent captureIntent;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            captureIntent = manager.createScreenCaptureIntent(
+                    MediaProjectionConfig.createConfigForDefaultDisplay()
             );
         } else {
-            updatePermissionState();
+            captureIntent = manager.createScreenCaptureIntent();
         }
+
+        startActivityForResult(captureIntent, SCREEN_CAPTURE_REQUEST);
     }
 
     private void openOverlayPermissionScreen() {
