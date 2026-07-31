@@ -5,12 +5,11 @@ import java.util.Comparator;
 import java.util.List;
 
 public final class BoardDetector {
-    private static final int[] SUPPORTED_SIZES = {8, 10, 12};
     private static final int MAX_WORK_DIMENSION = 900;
     private static final int MAX_PEAKS = 180;
 
-    public BoardGeometry detect(ArgbImage source) {
-        if (source == null) return null;
+    public BoardGeometry detect(ArgbImage source, int size) {
+        if (source == null || !HudBoardSizeDetector.isSupportedBoardSize(size)) return null;
         float scale = Math.min(1f, MAX_WORK_DIMENSION / (float) Math.max(source.width, source.height));
         ArgbImage image = scale == 1f ? source : source.scaledToFit(MAX_WORK_DIMENSION);
 
@@ -18,20 +17,18 @@ public final class BoardDetector {
         float[] horizontalProfile = horizontalEdgeProfile(image);
 
         Candidate best = null;
-        for (int size : SUPPORTED_SIZES) {
-            List<AxisCandidate> xs = axisCandidates(verticalProfile, size, image.width, image.height);
-            List<AxisCandidate> ys = axisCandidates(horizontalProfile, size, image.height, image.width);
-            for (AxisCandidate x : xs) {
-                for (AxisCandidate y : ys) {
-                    float pitchRatio = Math.min(x.pitch, y.pitch) / Math.max(x.pitch, y.pitch);
-                    if (pitchRatio < 0.93f) continue;
-                    float sideRatio = Math.min(x.side(), y.side()) / Math.max(x.side(), y.side());
-                    if (sideRatio < 0.93f) continue;
-                    float areaRatio = (x.side() * y.side()) / Math.max(1f, image.width * image.height);
-                    float score = x.score * y.score * pitchRatio * sideRatio * (0.85f + areaRatio);
-                    if (best == null || score > best.score) {
-                        best = new Candidate(size, x, y, score);
-                    }
+        List<AxisCandidate> xs = axisCandidates(verticalProfile, size, image.width, image.height);
+        List<AxisCandidate> ys = axisCandidates(horizontalProfile, size, image.height, image.width);
+        for (AxisCandidate x : xs) {
+            for (AxisCandidate y : ys) {
+                float pitchRatio = Math.min(x.pitch, y.pitch) / Math.max(x.pitch, y.pitch);
+                if (pitchRatio < 0.93f) continue;
+                float sideRatio = Math.min(x.side(), y.side()) / Math.max(x.side(), y.side());
+                if (sideRatio < 0.93f) continue;
+                float areaRatio = (x.side() * y.side()) / Math.max(1f, image.width * image.height);
+                float score = x.score * y.score * pitchRatio * sideRatio * (0.85f + areaRatio);
+                if (best == null || score > best.score) {
+                    best = new Candidate(size, x, y, score);
                 }
             }
         }

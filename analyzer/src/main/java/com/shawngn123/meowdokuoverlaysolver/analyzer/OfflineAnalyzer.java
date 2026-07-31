@@ -56,6 +56,7 @@ public final class OfflineAnalyzer {
             BufferedImage rendered = render(image, result, stage);
             ImageIO.write(rendered, "png", new File(output, stage.fileName));
         }
+        saveHudCrop(image, result, output);
 
         System.out.println(result.summary());
         if (result.regions != null) {
@@ -75,6 +76,17 @@ public final class OfflineAnalyzer {
         graphics.dispose();
         int[] pixels = argbImage.getRGB(0, 0, argbImage.getWidth(), argbImage.getHeight(), null, 0, argbImage.getWidth());
         return ArgbImage.wrapCopy(argbImage.getWidth(), argbImage.getHeight(), pixels);
+    }
+
+    private static void saveHudCrop(BufferedImage source, AnalysisResult result, File output) throws IOException {
+        if (result.hudDetection == null || result.hudDetection.cropBounds == null) return;
+        FloatRect bounds = result.hudDetection.cropBounds;
+        int left = clamp(Math.round(bounds.left), 0, source.getWidth() - 1);
+        int top = clamp(Math.round(bounds.top), 0, source.getHeight() - 1);
+        int right = clamp(Math.round(bounds.right), left + 1, source.getWidth());
+        int bottom = clamp(Math.round(bounds.bottom), top + 1, source.getHeight());
+        BufferedImage crop = source.getSubimage(left, top, right - left, bottom - top);
+        ImageIO.write(crop, "png", new File(output, "Debug_HUD.png"));
     }
 
     private static BufferedImage render(BufferedImage source, AnalysisResult result, DebugStage stage) {
@@ -255,5 +267,9 @@ public final class OfflineAnalyzer {
     private static String stripExtension(String name) {
         int dot = name.lastIndexOf('.');
         return dot <= 0 ? name : name.substring(0, dot);
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

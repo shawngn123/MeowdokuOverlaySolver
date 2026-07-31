@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class PuzzlePipeline {
+    private final HudBoardSizeDetector hudBoardSizeDetector = new HudBoardSizeDetector();
     private final BoardDetector boardDetector = new BoardDetector();
     private final RegionDetector regionDetector = new RegionDetector();
     private final PuzzleReader puzzleReader = new PuzzleReader();
@@ -11,44 +12,49 @@ public final class PuzzlePipeline {
 
     public AnalysisResult analyze(ArgbImage image) {
         if (image == null) {
-            return result(0, 0, null, null, null, null, null, "Screenshot is unavailable.");
+            return result(0, 0, null, null, null, null, null, null, "Screenshot is unavailable.");
         }
 
-        BoardGeometry board = boardDetector.detect(image);
+        HudBoardSizeDetector.Result hudDetection = hudBoardSizeDetector.detect(image);
+        if (hudDetection == null || !hudDetection.isSuccess()) {
+            return result(image.width, image.height, hudDetection, null, null, null, null, null, "Unable to determine board size.");
+        }
+
+        BoardGeometry board = boardDetector.detect(image, hudDetection.detectedValue);
         if (board == null) {
-            return result(image.width, image.height, null, null, null, null, null, "Puzzle board was not found.");
+            return result(image.width, image.height, hudDetection, null, null, null, null, null, "Puzzle board was not found.");
         }
         String boardError = boardValidationError(board);
         if (boardError != null) {
-            return result(image.width, image.height, board, null, null, null, null, "Puzzle board is invalid: " + boardError);
+            return result(image.width, image.height, hudDetection, board, null, null, null, null, "Puzzle board is invalid: " + boardError);
         }
 
         RegionDetector.Result detectedRegions = regionDetector.detect(image, board);
         RegionMap regions = detectedRegions.regions;
         if (!detectedRegions.isSuccess()) {
             String reason = detectedRegions.failureReason == null ? "Puzzle regions could not be read." : detectedRegions.failureReason;
-            return result(image.width, image.height, board, regions, null, null, null, "Puzzle regions could not be read: " + reason);
+            return result(image.width, image.height, hudDetection, board, regions, null, null, null, "Puzzle regions could not be read: " + reason);
         }
 
         PuzzleModel model = puzzleReader.read(image, board, regions);
         if (model == null) {
-            return result(image.width, image.height, board, regions, null, null, null, "Puzzle reader failed.");
+            return result(image.width, image.height, hudDetection, board, regions, null, null, null, "Puzzle reader failed.");
         }
         String modelError = model.validationError();
         if (modelError != null) {
-            return result(image.width, image.height, board, regions, model, null, null, "Puzzle is not ready to solve: " + modelError);
+            return result(image.width, image.height, hudDetection, board, regions, model, null, null, "Puzzle is not ready to solve: " + modelError);
         }
 
         PuzzleSolver.Result solved = puzzleSolver.solve(model);
         if (solved.solutionCount == 0) {
-            return result(image.width, image.height, board, regions, model, solved, null, "No solution.");
+            return result(image.width, image.height, hudDetection, board, regions, model, solved, null, "No solution.");
         }
         if (solved.solutionCount > 1) {
-            return result(image.width, image.height, board, regions, model, solved, null, "Multiple solutions.");
+            return result(image.width, image.height, hudDetection, board, regions, model, solved, null, "Multiple solutions.");
         }
 
         List<TouchTarget> targets = touchTargets(board, model.occupied, solved.columns);
-        return result(image.width, image.height, board, regions, model, solved, targets, null);
+        return result(image.width, image.height, hudDetection, board, regions, model, solved, targets, null);
     }
 
     private List<TouchTarget> touchTargets(BoardGeometry board, boolean[][] occupied, int[] solutionColumns) {
@@ -77,7 +83,7 @@ public final class PuzzlePipeline {
         if (board.rows != board.columns) {
             return "Board must be square; rows=" + board.rows + ", columns=" + board.columns + ".";
         }
-        if (board.rows != 8 && board.rows != 10 && board.rows != 12) {
+        if (!HudBoardSizeDetector.isSupportedBoardSize(board.rows)) {
             return "Detected unsupported board size " + board.rows + ".";
         }
         long expectedCells = (long) board.rows * board.rows;
@@ -98,6 +104,7 @@ public final class PuzzlePipeline {
     private AnalysisResult result(
             int imageWidth,
             int imageHeight,
+            HudBoardSizeDetector.Result hudDetection,
             BoardGeometry board,
             RegionMap regions,
             PuzzleModel model,
@@ -105,6 +112,6 @@ public final class PuzzlePipeline {
             List<TouchTarget> touchTargets,
             String failureReason
     ) {
-        return new AnalysisResult(imageWidth, imageHeight, board, regions, model, solution, touchTargets, failureReason);
+        return new AnalysisResult(imageWidth, imageHeight, hudDetection, board, regions, model, solution, touchTargets, failureReason);
     }
 }

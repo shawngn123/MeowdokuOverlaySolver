@@ -7,6 +7,7 @@ import java.util.List;
 public final class AnalysisResult {
     public final int imageWidth;
     public final int imageHeight;
+    public final HudBoardSizeDetector.Result hudDetection;
     public final BoardGeometry board;
     public final RegionMap regions;
     public final PuzzleModel model;
@@ -17,6 +18,7 @@ public final class AnalysisResult {
     AnalysisResult(
             int imageWidth,
             int imageHeight,
+            HudBoardSizeDetector.Result hudDetection,
             BoardGeometry board,
             RegionMap regions,
             PuzzleModel model,
@@ -26,6 +28,7 @@ public final class AnalysisResult {
     ) {
         this.imageWidth = imageWidth;
         this.imageHeight = imageHeight;
+        this.hudDetection = hudDetection;
         this.board = board;
         this.regions = regions;
         this.model = model;
@@ -43,6 +46,9 @@ public final class AnalysisResult {
     public String summary() {
         StringBuilder builder = new StringBuilder();
         builder.append("Image: ").append(imageWidth).append('x').append(imageHeight);
+        if (hudDetection != null) {
+            builder.append('\n').append(hudDebugSummary());
+        }
         if (board != null) {
             builder.append("\nBoard: ").append(board.rows).append('x').append(board.columns)
                     .append(" confidence=").append(String.format(java.util.Locale.US, "%.3f", board.confidence))
@@ -66,5 +72,14 @@ public final class AnalysisResult {
             builder.append("\nFailure: ").append(failureReason);
         }
         return builder.toString();
+    }
+
+    public String hudDebugSummary() {
+        String selected = hudDetection != null && hudDetection.isSuccess()
+                ? Integer.toString(hudDetection.detectedValue)
+                : "none";
+        return "Detected HUD value: " + (hudDetection == null ? "unavailable" : hudDetection.detectedValueText())
+                + "\nBoard size selected: " + selected
+                + "\nRecognition confidence: " + (hudDetection == null ? "0.000" : hudDetection.confidenceText());
     }
 }

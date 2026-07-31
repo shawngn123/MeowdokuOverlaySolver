@@ -36,6 +36,8 @@ final class DebugImageWriter {
             return null;
         }
 
+        saveHudCrop(screenshot, result, directory);
+
         for (DebugStage stage : DebugStage.values()) {
             Bitmap bitmap = screenshot.copy(Bitmap.Config.ARGB_8888, true);
             try {
@@ -54,6 +56,29 @@ final class DebugImageWriter {
         }
         Log.i(TAG, "Saved debug images: " + directory.getAbsolutePath());
         return directory;
+    }
+
+    private static void saveHudCrop(Bitmap screenshot, AnalysisResult result, File directory) {
+        if (result.hudDetection == null || result.hudDetection.cropBounds == null) return;
+        FloatRect bounds = result.hudDetection.cropBounds;
+        int left = clamp(Math.round(bounds.left), 0, screenshot.getWidth() - 1);
+        int top = clamp(Math.round(bounds.top), 0, screenshot.getHeight() - 1);
+        int right = clamp(Math.round(bounds.right), left + 1, screenshot.getWidth());
+        int bottom = clamp(Math.round(bounds.bottom), top + 1, screenshot.getHeight());
+        Bitmap crop = null;
+        try {
+            crop = Bitmap.createBitmap(screenshot, left, top, right - left, bottom - top);
+            File output = new File(directory, "Debug_HUD.png");
+            try (FileOutputStream stream = new FileOutputStream(output)) {
+                if (!crop.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                    Log.i(TAG, "Could not encode Debug_HUD.png");
+                }
+            }
+        } catch (IOException error) {
+            Log.e(TAG, "Could not save Debug_HUD.png", error);
+        } finally {
+            if (crop != null) crop.recycle();
+        }
     }
 
     private static void drawStage(Canvas canvas, AnalysisResult result, DebugStage stage) {
@@ -231,5 +256,9 @@ final class DebugImageWriter {
     private static String sanitize(String label) {
         if (label == null || label.isEmpty()) return "debug";
         return label.replaceAll("[^A-Za-z0-9._-]+", "_");
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 }

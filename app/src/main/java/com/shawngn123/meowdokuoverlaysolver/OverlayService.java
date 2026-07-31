@@ -332,6 +332,7 @@ public class OverlayService extends Service {
             try {
                 ArgbImage image = toArgbImage(bitmap);
                 AnalysisResult result = pipeline.analyze(image);
+                Log.i(TAG, result.hudDebugSummary());
                 DebugImageWriter.saveAll(OverlayService.this, bitmap, result, "operation-" + operation);
                 if (!isCurrentOperation(operation)) return;
                 main.post(() -> {
