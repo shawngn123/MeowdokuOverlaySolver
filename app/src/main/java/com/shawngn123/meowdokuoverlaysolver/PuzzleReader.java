@@ -8,7 +8,7 @@ import java.util.Arrays;
 
 final class PuzzleReader {
     PuzzleModel read(Bitmap bitmap, BoardGeometry board, RegionMap regions) {
-        if (bitmap == null || board == null || regions == null || !regions.isValid()) return null;
+        if (bitmap == null || board == null || regions == null || !regions.isValid() || !regions.hasBackgroundColors()) return null;
         int n = board.rows;
         float[][] scores = new float[n][n];
         float[][] badges = new float[n][n];
@@ -16,7 +16,7 @@ final class PuzzleReader {
         int index = 0;
         for (int row = 0; row < n; row++) {
             for (int column = 0; column < n; column++) {
-                CellScore score = scoreCell(bitmap, board.cellRect(row, column), regions.sampledColors[row][column]);
+                CellScore score = scoreCell(bitmap, board.cellRect(row, column), regions.backgroundColor(row, column));
                 scores[row][column] = score.cat;
                 badges[row][column] = score.badge;
                 flat[index++] = score.cat;
@@ -39,20 +39,16 @@ final class PuzzleReader {
 
         boolean[][] occupied = new boolean[n][n];
         boolean[][] locked = new boolean[n][n];
-        int occupiedCount = 0;
         if (separated) {
             for (int row = 0; row < n; row++) {
                 for (int column = 0; column < n; column++) {
                     boolean cat = scores[row][column] >= threshold;
                     occupied[row][column] = cat;
                     locked[row][column] = cat && badges[row][column] >= 0.085f;
-                    if (cat) occupiedCount++;
                 }
             }
         }
-        if (occupiedCount > n) return null;
-        PuzzleModel result = new PuzzleModel(n, regions, occupied, locked, scores);
-        return result.isValid() ? result : null;
+        return new PuzzleModel(n, regions, occupied, locked, scores);
     }
 
     private CellScore scoreCell(Bitmap bitmap, RectF cell, int background) {

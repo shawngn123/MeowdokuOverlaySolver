@@ -30,12 +30,42 @@ public class SolverAccessibilityService extends AccessibilityService {
             completion.complete(false, "Accessibility service is not enabled");
             return;
         }
+        if (board == null || occupied == null || solutionColumns == null) {
+            completion.complete(false, "Puzzle is not ready for accessibility taps");
+            return;
+        }
+        if (occupied.length != solutionColumns.length || board.rows != solutionColumns.length) {
+            completion.complete(false, "Puzzle dimensions changed before tapping");
+            return;
+        }
         List<PointF> points = new ArrayList<>();
         for (int row = 0; row < solutionColumns.length; row++) {
             int column = solutionColumns[row];
+            if (column < 0 || column >= board.columns || occupied[row] == null || occupied[row].length != board.columns) {
+                completion.complete(false, "Puzzle dimensions changed before tapping");
+                return;
+            }
             if (!occupied[row][column]) points.add(new PointF(board.centerX(column), board.centerY(row)));
         }
         service.startSequence(points, completion);
+    }
+
+    static void cancelActiveGestures() {
+        SolverAccessibilityService service = instance;
+        if (service != null) {
+            service.sequenceId++;
+        }
+    }
+
+    static void goBack(Completion completion) {
+        SolverAccessibilityService service = instance;
+        if (service == null) {
+            completion.complete(false, "Accessibility service is not enabled");
+            return;
+        }
+        service.sequenceId++;
+        boolean accepted = service.performGlobalAction(GLOBAL_ACTION_BACK);
+        completion.complete(accepted, accepted ? null : "Accessibility rejected the back action");
     }
 
     @Override protected void onServiceConnected() {

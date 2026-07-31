@@ -3,147 +3,206 @@ package com.shawngn123.meowdokuoverlaysolver;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.RectF;
+import android.util.Log;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 final class RegionDetector {
-    RegionMap detect(Bitmap bitmap, BoardGeometry board) {
-        if (bitmap == null || board == null || board.rows != board.columns) return null;
-        int n = board.rows;
-        int[][] colors = new int[n][n];
-        for (int row = 0; row < n; row++) {
-            for (int column = 0; column < n; column++) {
-                colors[row][column] = sampleCellColor(bitmap, board.cellRect(row, column));
+    private static final String TAG = "MeowdokuSolver";
+    private static final float COLOR_WEIGHT = 0.72f;
+    private static final float BOUNDARY_WEIGHT = 0.28f;
+    private static final int CELL_SAMPLE_STEPS = 13;
+    private static final float CELL_SAMPLE_MIN_FRACTION = 0.14f;
+    private static final float CELL_SAMPLE_MAX_FRACTION = 0.86f;
+    private static final int COLOR_BUCKET_CHANNEL_SHIFT = 4;
+    private static final int COLOR_BUCKET_CHANNELS = 1 << COLOR_BUCKET_CHANNEL_SHIFT;
+    private static final int COLOR_BUCKET_COUNT = COLOR_BUCKET_CHANNELS * COLOR_BUCKET_CHANNELS * COLOR_BUCKET_CHANNELS;
+    private static final int BOUNDARY_SAMPLES = 9;
+    private static final float BOUNDARY_SAMPLE_START = 0.16f;
+    private static final float BOUNDARY_SAMPLE_SPAN = 0.68f;
+    private static final float BOUNDARY_SAMPLE_OFFSET = 0.16f;
+
+    static final class Result {
+        final RegionMap regions;
+        final String failureReason;
+
+        private Result(RegionMap regions, String failureReason) {
+            this.regions = regions;
+            this.failureReason = failureReason;
+        }
+
+        boolean isSuccess() {
+            return regions != null && failureReason == null;
+        }
+    }
+
+    Result detect(Bitmap bitmap, BoardGeometry board) {
+        String inputError = inputValidationError(bitmap, board);
+        if (inputError != null) {
+            return failure(inputError);
+        }
+
+        int size = board.rows;
+        // Screenshot pixels seed this one-time inference; downstream solving uses only RegionIDs.
+        int[][] backgroundColors = new int[size][size];
+        ColorBuckets buckets = new ColorBuckets();
+        for (int row = 0; row < size; row++) {
+            for (int column = 0; column < size; column++) {
+                backgroundColors[row][column] = sampleCellBackgroundColor(bitmap, board.cellRect(row, column), buckets);
             }
         }
 
-        List<Edge> edges = new ArrayList<>();
-        for (int row = 0; row < n; row++) {
-            for (int column = 0; column < n; column++) {
-                int cell = row * n + column;
-                if (column + 1 < n) {
-                    float color = colorDistance(colors[row][column], colors[row][column + 1]);
-                    float border = boundaryDifference(bitmap, board, row, column, true);
-                    edges.add(new Edge(cell, cell + 1, color * 0.72f + border * 0.28f));
+        Edge[] edges = new Edge[2 * size * (size - 1)];
+        int edgeCount = 0;
+        for (int row = 0; row < size; row++) {
+            for (int column = 0; column < size; column++) {
+                int cell = row * size + column;
+                if (column + 1 < size) {
+                    float color = colorDistance(backgroundColors[row][column], backgroundColors[row][column + 1]);
+                    float boundary = boundaryDifference(bitmap, board, row, column, true);
+                    edges[edgeCount++] = new Edge(cell, cell + 1, color * COLOR_WEIGHT + boundary * BOUNDARY_WEIGHT);
                 }
-                if (row + 1 < n) {
-                    float color = colorDistance(colors[row][column], colors[row + 1][column]);
-                    float border = boundaryDifference(bitmap, board, row, column, false);
-                    edges.add(new Edge(cell, cell + n, color * 0.72f + border * 0.28f));
+                if (row + 1 < size) {
+                    float color = colorDistance(backgroundColors[row][column], backgroundColors[row + 1][column]);
+                    float boundary = boundaryDifference(bitmap, board, row, column, false);
+                    edges[edgeCount++] = new Edge(cell, cell + size, color * COLOR_WEIGHT + boundary * BOUNDARY_WEIGHT);
                 }
             }
         }
-        edges.sort(Comparator.comparingDouble(edge -> edge.weight));
+        if (edgeCount == 0) {
+            return failure("Expected region adjacency edges, found 0.");
+        }
+        Arrays.sort(edges, 0, edgeCount, Comparator.comparingDouble(edge -> edge.weight));
 
-        UnionFind union = new UnionFind(n * n);
-        float lastMerged = 0f;
+        UnionFind union = new UnionFind(size * size);
+        float lastMergedWeight = 0f;
         int edgeIndex = 0;
-        while (union.components > n && edgeIndex < edges.size()) {
-            Edge edge = edges.get(edgeIndex++);
-            if (union.union(edge.a, edge.b)) lastMerged = edge.weight;
+        while (union.components > size && edgeIndex < edgeCount) {
+            Edge edge = edges[edgeIndex++];
+            if (union.union(edge.a, edge.b)) {
+                lastMergedWeight = edge.weight;
+            }
         }
-        if (union.components != n) return null;
+        if (union.components != size) {
+            return failure("Expected " + size + " regions, found " + union.components + ".");
+        }
 
-        float nextWeight = lastMerged;
-        while (edgeIndex < edges.size()) {
-            Edge edge = edges.get(edgeIndex++);
+        float nextBoundaryWeight = lastMergedWeight;
+        while (edgeIndex < edgeCount) {
+            Edge edge = edges[edgeIndex++];
             if (union.find(edge.a) != union.find(edge.b)) {
-                nextWeight = edge.weight;
+                nextBoundaryWeight = edge.weight;
                 break;
             }
         }
 
-        Map<Integer, Integer> ids = new HashMap<>();
-        int[][] map = new int[n][n];
+        Map<Integer, Integer> ids = new HashMap<>(size);
+        int[][] regionIds = new int[size][size];
         int nextId = 0;
-        int[] counts = new int[n];
-        for (int row = 0; row < n; row++) {
-            for (int column = 0; column < n; column++) {
-                int root = union.find(row * n + column);
+        for (int row = 0; row < size; row++) {
+            for (int column = 0; column < size; column++) {
+                int root = union.find(row * size + column);
                 Integer id = ids.get(root);
                 if (id == null) {
                     id = nextId++;
                     ids.put(root, id);
                 }
-                map[row][column] = id;
-                if (id < counts.length) counts[id]++;
+                regionIds[row][column] = id;
             }
         }
-        if (nextId != n) return null;
-        for (int count : counts) if (count == 0) return null;
+        if (nextId != size) {
+            return failure("Expected " + size + " regions, found " + nextId + ".");
+        }
 
-        float separation = Math.max(0f, nextWeight - lastMerged);
-        float confidence = nextWeight <= 0f ? 0f : Math.min(1f, separation / Math.max(3f, nextWeight));
-        RegionMap result = new RegionMap(n, map, nextId, confidence, colors);
-        return result.isValid() ? result : null;
+        RegionMap regions = new RegionMap(size, regionIds, nextId, backgroundColors);
+        String validationError = regions.validationError(board.rows, board.columns);
+        if (validationError != null) {
+            return failure(validationError);
+        }
+
+        Log.d(TAG, "Detected " + nextId + " deterministic RegionIDs; last merged edge="
+                + lastMergedWeight + ", next boundary edge=" + nextBoundaryWeight + ".");
+        return new Result(regions, null);
+    }
+
+    private String inputValidationError(Bitmap bitmap, BoardGeometry board) {
+        if (bitmap == null || bitmap.isRecycled()) {
+            return "Screenshot is unavailable.";
+        }
+        if (board == null) {
+            return "Board is missing.";
+        }
+        if (board.rows != board.columns) {
+            return "Board must be square; rows=" + board.rows + ", columns=" + board.columns + ".";
+        }
+        if (board.rows < 4 || board.rows > 12) {
+            return "Unsupported board size " + board.rows + ".";
+        }
+        return null;
+    }
+
+    private Result failure(String reason) {
+        Log.i(TAG, "Region detection validation failed: " + reason);
+        return new Result(null, reason);
     }
 
     private float boundaryDifference(Bitmap bitmap, BoardGeometry board, int row, int column, boolean vertical) {
         RectF first = board.cellRect(row, column);
         RectF second = vertical ? board.cellRect(row, column + 1) : board.cellRect(row + 1, column);
         float total = 0f;
-        int samples = 9;
-        for (int i = 0; i < samples; i++) {
-            float t = 0.16f + i / (samples - 1f) * 0.68f;
-            int x1, y1, x2, y2;
+        for (int i = 0; i < BOUNDARY_SAMPLES; i++) {
+            float t = BOUNDARY_SAMPLE_START + i / (BOUNDARY_SAMPLES - 1f) * BOUNDARY_SAMPLE_SPAN;
+            int x1;
+            int y1;
+            int x2;
+            int y2;
             if (vertical) {
                 float boundary = first.right;
-                x1 = Math.round(boundary - first.width() * 0.16f);
-                x2 = Math.round(boundary + second.width() * 0.16f);
+                x1 = Math.round(boundary - first.width() * BOUNDARY_SAMPLE_OFFSET);
+                x2 = Math.round(boundary + second.width() * BOUNDARY_SAMPLE_OFFSET);
                 y1 = y2 = Math.round(first.top + first.height() * t);
             } else {
                 float boundary = first.bottom;
-                y1 = Math.round(boundary - first.height() * 0.16f);
-                y2 = Math.round(boundary + second.height() * 0.16f);
+                y1 = Math.round(boundary - first.height() * BOUNDARY_SAMPLE_OFFSET);
+                y2 = Math.round(boundary + second.height() * BOUNDARY_SAMPLE_OFFSET);
                 x1 = x2 = Math.round(first.left + first.width() * t);
             }
             int a = bitmap.getPixel(clamp(x1, 0, bitmap.getWidth() - 1), clamp(y1, 0, bitmap.getHeight() - 1));
             int b = bitmap.getPixel(clamp(x2, 0, bitmap.getWidth() - 1), clamp(y2, 0, bitmap.getHeight() - 1));
             total += colorDistance(a, b);
         }
-        return total / samples;
+        return total / BOUNDARY_SAMPLES;
     }
 
-    private int sampleCellColor(Bitmap bitmap, RectF cell) {
-        float[] anchors = {0.22f, 0.34f, 0.66f, 0.78f};
-        int sampleCount = anchors.length * anchors.length * 9;
-        int[] red = new int[sampleCount];
-        int[] green = new int[sampleCount];
-        int[] blue = new int[sampleCount];
-        int count = 0;
-        float radiusX = Math.max(1f, cell.width() * 0.035f);
-        float radiusY = Math.max(1f, cell.height() * 0.035f);
-        for (float ax : anchors) {
-            for (float ay : anchors) {
-                float cx = cell.left + cell.width() * ax;
-                float cy = cell.top + cell.height() * ay;
-                for (int sy = -1; sy <= 1; sy++) {
-                    for (int sx = -1; sx <= 1; sx++) {
-                        int pixel = bitmap.getPixel(
-                                clamp(Math.round(cx + sx * radiusX), 0, bitmap.getWidth() - 1),
-                                clamp(Math.round(cy + sy * radiusY), 0, bitmap.getHeight() - 1)
-                        );
-                        red[count] = Color.red(pixel);
-                        green[count] = Color.green(pixel);
-                        blue[count] = Color.blue(pixel);
-                        count++;
-                    }
-                }
+    private int sampleCellBackgroundColor(Bitmap bitmap, RectF cell, ColorBuckets buckets) {
+        buckets.clear();
+        int total = 0;
+        for (int sy = 0; sy < CELL_SAMPLE_STEPS; sy++) {
+            float fy = CELL_SAMPLE_MIN_FRACTION
+                    + sy / (CELL_SAMPLE_STEPS - 1f) * (CELL_SAMPLE_MAX_FRACTION - CELL_SAMPLE_MIN_FRACTION);
+            int y = clamp(Math.round(cell.top + cell.height() * fy), 0, bitmap.getHeight() - 1);
+            for (int sx = 0; sx < CELL_SAMPLE_STEPS; sx++) {
+                float fx = CELL_SAMPLE_MIN_FRACTION
+                        + sx / (CELL_SAMPLE_STEPS - 1f) * (CELL_SAMPLE_MAX_FRACTION - CELL_SAMPLE_MIN_FRACTION);
+                int x = clamp(Math.round(cell.left + cell.width() * fx), 0, bitmap.getWidth() - 1);
+                buckets.add(bitmap.getPixel(x, y));
+                total++;
             }
         }
-        java.util.Arrays.sort(red);
-        java.util.Arrays.sort(green);
-        java.util.Arrays.sort(blue);
-        return Color.rgb(median(red), median(green), median(blue));
-    }
 
-    private int median(int[] values) {
-        int middle = values.length / 2;
-        return (values[middle - 1] + values[middle]) / 2;
+        int bestBucket = buckets.bestBucket();
+        if (bestBucket >= 0) {
+            return buckets.averageColor(bestBucket);
+        }
+        int center = bitmap.getPixel(
+                clamp(Math.round(cell.centerX()), 0, bitmap.getWidth() - 1),
+                clamp(Math.round(cell.centerY()), 0, bitmap.getHeight() - 1)
+        );
+        Log.i(TAG, "Cell background sampling fell back to center pixel after " + total + " samples.");
+        return Color.rgb(Color.red(center), Color.green(center), Color.blue(center));
     }
 
     private float colorDistance(int first, int second) {
@@ -157,27 +216,85 @@ final class RegionDetector {
         return (rgb * 0.58f + luminance * 0.27f + chroma * 0.15f) * 255f;
     }
 
-    private int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static final class ColorBuckets {
+        final int[] counts = new int[COLOR_BUCKET_COUNT];
+        final int[] reds = new int[COLOR_BUCKET_COUNT];
+        final int[] greens = new int[COLOR_BUCKET_COUNT];
+        final int[] blues = new int[COLOR_BUCKET_COUNT];
+
+        void clear() {
+            Arrays.fill(counts, 0);
+            Arrays.fill(reds, 0);
+            Arrays.fill(greens, 0);
+            Arrays.fill(blues, 0);
+        }
+
+        void add(int color) {
+            int red = Color.red(color);
+            int green = Color.green(color);
+            int blue = Color.blue(color);
+            int bucket = ((red >> COLOR_BUCKET_CHANNEL_SHIFT) << 8)
+                    | ((green >> COLOR_BUCKET_CHANNEL_SHIFT) << 4)
+                    | (blue >> COLOR_BUCKET_CHANNEL_SHIFT);
+            counts[bucket]++;
+            reds[bucket] += red;
+            greens[bucket] += green;
+            blues[bucket] += blue;
+        }
+
+        int bestBucket() {
+            int bestBucket = -1;
+            int bestCount = 0;
+            for (int i = 0; i < counts.length; i++) {
+                if (counts[i] > bestCount) {
+                    bestCount = counts[i];
+                    bestBucket = i;
+                }
+            }
+            return bestBucket;
+        }
+
+        int averageColor(int bucket) {
+            int count = Math.max(1, counts[bucket]);
+            return Color.rgb(reds[bucket] / count, greens[bucket] / count, blues[bucket] / count);
+        }
+    }
 
     private static final class Edge {
-        final int a, b;
+        final int a;
+        final int b;
         final float weight;
-        Edge(int a, int b, float weight) { this.a = a; this.b = b; this.weight = weight; }
+
+        Edge(int a, int b, float weight) {
+            this.a = a;
+            this.b = b;
+            this.weight = weight;
+        }
     }
 
     private static final class UnionFind {
         final int[] parent;
         final byte[] rank;
         int components;
+
         UnionFind(int count) {
             parent = new int[count];
             rank = new byte[count];
             components = count;
-            for (int i = 0; i < count; i++) parent[i] = i;
+            for (int i = 0; i < count; i++) {
+                parent[i] = i;
+            }
         }
+
         int find(int value) {
             int root = value;
-            while (parent[root] != root) root = parent[root];
+            while (parent[root] != root) {
+                root = parent[root];
+            }
             while (parent[value] != value) {
                 int next = parent[value];
                 parent[value] = root;
@@ -185,12 +302,21 @@ final class RegionDetector {
             }
             return root;
         }
+
         boolean union(int a, int b) {
-            int ra = find(a), rb = find(b);
-            if (ra == rb) return false;
-            if (rank[ra] < rank[rb]) parent[ra] = rb;
-            else if (rank[ra] > rank[rb]) parent[rb] = ra;
-            else { parent[rb] = ra; rank[ra]++; }
+            int firstRoot = find(a);
+            int secondRoot = find(b);
+            if (firstRoot == secondRoot) {
+                return false;
+            }
+            if (rank[firstRoot] < rank[secondRoot]) {
+                parent[firstRoot] = secondRoot;
+            } else if (rank[firstRoot] > rank[secondRoot]) {
+                parent[secondRoot] = firstRoot;
+            } else {
+                parent[secondRoot] = firstRoot;
+                rank[firstRoot]++;
+            }
             components--;
             return true;
         }

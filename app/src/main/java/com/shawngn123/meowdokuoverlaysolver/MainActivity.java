@@ -14,6 +14,7 @@ import android.provider.Settings;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -23,6 +24,7 @@ public class MainActivity extends Activity {
 
     private TextView statusText;
     private Button permissionButton;
+    private CheckBox repositioningCheckBox;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -39,6 +41,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        updateRepositioningState();
         updatePermissionState();
     }
 
@@ -47,6 +50,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != SCREEN_CAPTURE_REQUEST) return;
         if (resultCode == RESULT_OK && data != null) OverlayService.setProjectionPermission(resultCode, data);
+        updateRepositioningState();
         updatePermissionState();
     }
 
@@ -66,7 +70,7 @@ public class MainActivity extends Activity {
         root.addView(title, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         TextView description = new TextView(this);
-        description.setText("Grant the required permissions. The floating SOLVE button will then appear over other apps.");
+        description.setText("Grant the required permissions. The floating SOLVE and QUIT buttons will then appear over other apps.");
         description.setTextSize(17);
         description.setTextColor(Color.rgb(80, 67, 60));
         description.setGravity(Gravity.CENTER);
@@ -88,7 +92,25 @@ public class MainActivity extends Activity {
         LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         buttonParams.topMargin = dp(24);
         root.addView(permissionButton, buttonParams);
+
+        repositioningCheckBox = new CheckBox(this);
+        repositioningCheckBox.setText("Allow Button Repositioning");
+        repositioningCheckBox.setTextSize(16);
+        repositioningCheckBox.setTextColor(Color.rgb(40, 32, 28));
+        LinearLayout.LayoutParams checkboxParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        checkboxParams.topMargin = dp(16);
+        root.addView(repositioningCheckBox, checkboxParams);
         return root;
+    }
+
+    private void updateRepositioningState() {
+        if (repositioningCheckBox == null) return;
+        repositioningCheckBox.setOnCheckedChangeListener(null);
+        repositioningCheckBox.setChecked(OverlayPreferences.allowButtonRepositioning(this));
+        repositioningCheckBox.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            OverlayPreferences.setAllowButtonRepositioning(this, isChecked);
+            if (Settings.canDrawOverlays(this)) startOverlayService();
+        });
     }
 
     private void updatePermissionState() {
@@ -113,7 +135,7 @@ public class MainActivity extends Activity {
             permissionButton.setOnClickListener(v -> openAccessibilitySettings());
             return;
         }
-        statusText.setText("Permissions granted. The SOLVE button is active.");
+        statusText.setText("Permissions granted. The overlay buttons are active.");
         permissionButton.setText("Overlay active");
         permissionButton.setEnabled(false);
         permissionButton.setOnClickListener(null);
